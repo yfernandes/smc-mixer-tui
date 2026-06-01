@@ -22,6 +22,27 @@ func parseStreams(data []byte) ([]Stream, error) {
 		return nil, fmt.Errorf("parse pw-dump: %w", err)
 	}
 
+	// Build client-ID → (PID, app name) maps. Some stream nodes omit
+	// application.process.id and application.name entirely, storing the info
+	// only on their owning Client node (referenced via client.id).
+	clientPIDs := make(map[uint32]uint32)
+	clientNames := make(map[uint32]string)
+	for _, n := range nodes {
+		if n.Type != "PipeWire:Interface:Client" {
+			continue
+		}
+		pid := rawUint32(n.Info.Props["application.process.id"])
+		if pid == 0 {
+			pid = rawUint32(n.Info.Props["pipewire.sec.pid"])
+		}
+		if pid > 0 {
+			clientPIDs[n.ID] = pid
+		}
+		if name := rawStr(n.Info.Props["application.name"]); name != "" {
+			clientNames[n.ID] = name
+		}
+	}
+
 	var streams []Stream
 	for _, n := range nodes {
 		if n.Type != "PipeWire:Interface:Node" {
@@ -40,10 +61,15 @@ func parseStreams(data []byte) ([]Stream, error) {
 			continue
 		}
 
+		clientID := rawUint32(n.Info.Props["client.id"])
+
 		// Hardware devices expose a human-readable node.description; prefer it.
 		name := rawStr(n.Info.Props["node.description"])
 		if name == "" {
 			name = rawStr(n.Info.Props["application.name"])
+		}
+		if name == "" && clientID > 0 {
+			name = clientNames[clientID]
 		}
 		if name == "" {
 			name = rawStr(n.Info.Props["node.name"])
@@ -51,11 +77,18 @@ func parseStreams(data []byte) ([]Stream, error) {
 		if name == "" {
 			name = fmt.Sprintf("stream-%d", n.ID)
 		}
+
+		// Resolve PID: prefer the node-level property, fall back to the client node.
+		pid := rawUint32(n.Info.Props["application.process.id"])
+		if pid == 0 && clientID > 0 {
+			pid = clientPIDs[clientID]
+		}
+
 		streams = append(streams, Stream{
 			ID:        n.ID,
 			Name:      name,
 			MediaName: rawStr(n.Info.Props["media.name"]),
-			PID:       rawUint32(n.Info.Props["application.process.id"]),
+			PID:       pid,
 			Kind:      kind,
 		})
 	}

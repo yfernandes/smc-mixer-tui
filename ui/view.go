@@ -82,7 +82,7 @@ func (m Model) renderStrip(ch int) string {
 		fmt.Sprintf("◎%4d", c.Knob),
 		faderBar(float64(c.Knob)/127.0, knobBarW+1),
 		row("", ""),
-		row(fRows[0], renderBtn("M", c.Mute, btnMuteOn)),
+		row(fRows[0], renderBtn("M", c.Mute || c.SoloMuted, btnMuteOn)),
 		row(fRows[1], renderBtn("S", c.Solo, btnSoloOn)),
 		row(fRows[2], renderBtn("R", c.Rec, btnRecOn)),
 		row(fRows[3], renderBtn("■", c.Stop, btnStopOn)),

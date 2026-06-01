@@ -61,6 +61,7 @@ func main() {
 	}
 
 	disp := dispatcher.New(pw)
+	disp.SetMPRISCaller(streams.NewController())
 	applyBindings(cfg, disp, initial)
 
 	var (
@@ -148,7 +149,8 @@ func main() {
 		}
 	}()
 
-	// Poll PipeWire for actual volumes so strips react to external changes.
+	// Poll PipeWire for actual volumes and MPRIS playback status so strips
+	// react to external changes (keyboard shortcuts, remote controls, etc.).
 	go func() {
 		ticker := time.NewTicker(300 * time.Millisecond)
 		defer ticker.Stop()
@@ -167,6 +169,9 @@ func main() {
 						continue
 					}
 					disp.UpdateActualVolume(ch, vol)
+					if c.MPRISName != "" {
+						disp.UpdatePlaybackStatus(ch, streams.IsPlaying(ctx, c.MPRISName))
+					}
 				}
 			}
 		}
@@ -214,7 +219,11 @@ func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams
 		}
 		for _, s := range ss {
 			if strings.EqualFold(s.BindKey, key) {
-				disp.Bind(ch, s.ID, s.Name)
+				mprisName := ""
+				if s.Source == streams.SourceMPRIS {
+					mprisName = s.Name
+				}
+				disp.Bind(ch, s.ID, s.Name, dispatcher.NodeKind(s.Kind), mprisName)
 				break
 			}
 		}

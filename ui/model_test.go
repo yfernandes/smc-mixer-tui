@@ -19,14 +19,16 @@ type fakeDisp struct {
 }
 
 type bindCall struct {
-	ch   int
-	id   uint32
-	name string
+	ch        int
+	id        uint32
+	name      string
+	kind      dispatcher.NodeKind
+	mprisName string
 }
 
 func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
-func (f *fakeDisp) Bind(ch int, id uint32, name string) {
-	f.binds = append(f.binds, bindCall{ch, id, name})
+func (f *fakeDisp) Bind(ch int, id uint32, name string, kind dispatcher.NodeKind, mprisName string) {
+	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName})
 }
 func (f *fakeDisp) Unbind(ch int) { f.unbinds = append(f.unbinds, ch) }
 

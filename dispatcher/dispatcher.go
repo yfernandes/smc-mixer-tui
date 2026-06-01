@@ -13,6 +13,15 @@ import (
 // and external-change detection (≈2 MIDI steps out of 127).
 const pickupThreshold = 2.0 / 127.0
 
+// NodeKind classifies an audio stream's functional role.
+type NodeKind uint8
+
+const (
+	KindSource NodeKind = iota // app playing audio
+	KindMic                    // microphone / capture device
+	KindSink                   // output device / speakers
+)
+
 // PipeWire is the subset of pipewire.Client used by the dispatcher.
 type PipeWire interface {
 	SetVolume(ctx context.Context, id uint32, vol float64) error
@@ -26,16 +35,24 @@ type LEDWriter interface {
 	SetGlobalLED(action midi.GlobalAction, on bool)
 }
 
+// MPRISCaller toggles playback for a named MPRIS media player.
+type MPRISCaller interface {
+	PlayPause(ctx context.Context, playerName string) error
+}
+
 // Channel holds the runtime state for one mixer channel strip.
 type Channel struct {
-	StreamID     *uint32 // nil if unbound
-	Name         string  // display name; "" if unbound
-	ActualVolume float64 // volume reported by PipeWire — the source of truth
-	FaderPos     float64 // physical hardware fader position, 0.0–1.0
-	LastSetVol   float64 // last volume we sent to PipeWire; -1 = never
-	Synced       bool    // fader has picked up ActualVolume; controls PipeWire when true
-	Knob         int     // 0–127, accumulated relative position; starts at 64
-	Mute         bool
+	StreamID     *uint32  // nil if unbound
+	Name         string   // display name; "" if unbound
+	Kind         NodeKind // functional role; set on Bind
+	MPRISName    string   // MPRIS player name suffix; "" if not an MPRIS source
+	ActualVolume float64  // volume reported by PipeWire — the source of truth
+	FaderPos     float64  // physical hardware fader position, 0.0–1.0
+	LastSetVol   float64  // last volume we sent to PipeWire; -1 = never
+	Synced       bool     // fader has picked up ActualVolume; controls PipeWire when true
+	Knob         int      // 0–127, accumulated relative position; starts at 64
+	Mute         bool     // user-set mute
+	SoloMuted    bool     // muted as a side-effect of another same-kind channel being soloed
 	Solo         bool
 	Rec          bool
 	Stop         bool
@@ -53,7 +70,8 @@ var globalLEDActions = [5]midi.GlobalAction{
 // Dispatcher maps MIDI events to PipeWire actions and maintains channel state.
 type Dispatcher struct {
 	pw         PipeWire
-	leds       LEDWriter // nil when no device is connected
+	leds       LEDWriter   // nil when no device is connected
+	mpris      MPRISCaller // nil when MPRIS unavailable
 	channels   [8]Channel
 	globalLEDs [5]bool // toggle state for transport buttons, indexed by globalLEDActions
 	mu         sync.RWMutex
@@ -66,6 +84,13 @@ func New(pw PipeWire) *Dispatcher {
 		d.channels[i].Knob = 64
 	}
 	return d
+}
+
+// SetMPRISCaller sets (or clears, if nil) the MPRIS playback controller.
+func (d *Dispatcher) SetMPRISCaller(m MPRISCaller) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.mpris = m
 }
 
 // SetLEDWriter sets (or clears, if nil) the LED output device.
@@ -90,7 +115,7 @@ func (d *Dispatcher) SyncLEDs() {
 	for ch, c := range chs {
 		leds.SetButtonLED(ch, midi.ButtonRec, c.Rec)
 		leds.SetButtonLED(ch, midi.ButtonSolo, c.Solo)
-		leds.SetButtonLED(ch, midi.ButtonMute, c.Mute)
+		leds.SetButtonLED(ch, midi.ButtonMute, c.Mute || c.SoloMuted)
 		leds.SetButtonLED(ch, midi.ButtonStop, c.Stop)
 		// Fader LED blinks when bound AND synced; off when unbound or awaiting pickup.
 		leds.SetFaderLED(ch, c.StreamID != nil && c.Synced)
@@ -133,7 +158,7 @@ func (d *Dispatcher) OnGlobal(m midi.GlobalMsg) {
 // unbound first — a stream may only be controlled by one channel at a time.
 // The new channel starts unsynced: the fader must reach the actual volume
 // before it takes control of PipeWire.
-func (d *Dispatcher) Bind(ch int, id uint32, name string) {
+func (d *Dispatcher) Bind(ch int, id uint32, name string, kind NodeKind, mprisName string) {
 	d.mu.Lock()
 	// Release any other channel already holding this stream.
 	var evicted []int
@@ -147,6 +172,8 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string) {
 	}
 	d.channels[ch].StreamID = &id
 	d.channels[ch].Name = name
+	d.channels[ch].Kind = kind
+	d.channels[ch].MPRISName = mprisName
 	d.channels[ch].Synced = false
 	d.channels[ch].ActualVolume = 0
 	d.channels[ch].LastSetVol = -1
@@ -172,6 +199,18 @@ func (d *Dispatcher) Unbind(ch int) {
 
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
+	}
+}
+
+// UpdatePlaybackStatus syncs the Stop button LED to the actual MPRIS playback
+// state. playing=true means the stream is actively playing (LED on).
+func (d *Dispatcher) UpdatePlaybackStatus(ch int, playing bool) {
+	d.mu.Lock()
+	d.channels[ch].Stop = playing
+	leds := d.leds
+	d.mu.Unlock()
+	if leds != nil {
+		leds.SetButtonLED(ch, midi.ButtonStop, playing)
 	}
 }
 
@@ -273,6 +312,14 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 	if !m.Pressed {
 		return
 	}
+
+	type soloUpdate struct {
+		ch    int
+		id    uint32
+		bound bool
+		mute  bool
+	}
+
 	d.mu.Lock()
 	ch := &d.channels[m.Channel]
 	switch m.Kind {
@@ -285,11 +332,11 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 	case midi.ButtonStop:
 		ch.Stop = !ch.Stop
 	}
-	muted, id, leds := ch.Mute, ch.StreamID, d.leds
+
 	var ledState bool
 	switch m.Kind {
 	case midi.ButtonMute:
-		ledState = ch.Mute
+		ledState = ch.Mute || ch.SoloMuted
 	case midi.ButtonSolo:
 		ledState = ch.Solo
 	case midi.ButtonRec:
@@ -297,14 +344,83 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 	case midi.ButtonStop:
 		ledState = ch.Stop
 	}
+
+	// Capture per-channel state for post-lock PipeWire / MPRIS calls.
+	chBound := ch.StreamID != nil
+	var chID uint32
+	if chBound {
+		chID = *ch.StreamID
+	}
+	chMuteEffective := ch.Mute || ch.SoloMuted
+	chKind := ch.Kind
+	chMPRIS := ch.MPRISName
+
+	// Solo: recompute SoloMuted for every channel in the same kind group.
+	var soloUpdates []soloUpdate
+	if m.Kind == midi.ButtonSolo {
+		anySoloed := false
+		for i := range d.channels {
+			if d.channels[i].Kind == chKind && d.channels[i].Solo {
+				anySoloed = true
+				break
+			}
+		}
+		for i := range d.channels {
+			if d.channels[i].Kind != chKind {
+				continue
+			}
+			d.channels[i].SoloMuted = anySoloed && !d.channels[i].Solo
+			u := soloUpdate{
+				ch:   i,
+				mute: d.channels[i].Mute || d.channels[i].SoloMuted,
+			}
+			if d.channels[i].StreamID != nil {
+				u.id = *d.channels[i].StreamID
+				u.bound = true
+			}
+			soloUpdates = append(soloUpdates, u)
+		}
+	}
+
+	leds := d.leds
+	mpris := d.mpris
 	d.mu.Unlock()
 
 	if leds != nil {
 		leds.SetButtonLED(m.Channel, m.Kind, ledState)
 	}
-	if m.Kind == midi.ButtonMute && id != nil {
-		if err := d.pw.SetMute(ctx, *id, muted); err != nil {
-			log.Printf("button ch%d mute: SetMute(%d, %v): %v", m.Channel, *id, muted, err)
+
+	switch m.Kind {
+	case midi.ButtonMute:
+		if chBound {
+			if err := d.pw.SetMute(ctx, chID, chMuteEffective); err != nil {
+				log.Printf("button ch%d mute: SetMute(%d, %v): %v", m.Channel, chID, chMuteEffective, err)
+			}
+		}
+	case midi.ButtonSolo:
+		for _, u := range soloUpdates {
+			if !u.bound {
+				continue
+			}
+			if err := d.pw.SetMute(ctx, u.id, u.mute); err != nil {
+				log.Printf("solo ch%d: SetMute(%d, %v): %v", u.ch, u.id, u.mute, err)
+			}
+		}
+		if leds != nil {
+			d.mu.RLock()
+			for i, c := range d.channels {
+				if c.Kind == chKind {
+					leds.SetButtonLED(i, midi.ButtonMute, c.Mute || c.SoloMuted)
+					leds.SetButtonLED(i, midi.ButtonSolo, c.Solo)
+				}
+			}
+			d.mu.RUnlock()
+		}
+	case midi.ButtonStop:
+		if chMPRIS != "" && mpris != nil {
+			if err := mpris.PlayPause(ctx, chMPRIS); err != nil {
+				log.Printf("button ch%d stop: PlayPause(%s): %v", m.Channel, chMPRIS, err)
+			}
 		}
 	}
 }

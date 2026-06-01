@@ -20,6 +20,7 @@ func queryHyprland(ctx context.Context) ([]hyprWindow, error) {
 // hyprctlWindow is the relevant subset of a hyprctl clients entry.
 type hyprctlWindow struct {
 	Class string `json:"class"`
+	Title string `json:"title"`
 	PID   uint32 `json:"pid"`
 }
 
@@ -33,7 +34,7 @@ func parseHyprClients(data []byte) ([]hyprWindow, error) {
 		if w.Class == "" || w.PID == 0 {
 			continue
 		}
-		out = append(out, hyprWindow{PID: w.PID, Class: w.Class})
+		out = append(out, hyprWindow{PID: w.PID, Class: w.Class, Title: w.Title})
 	}
 	return out, nil
 }

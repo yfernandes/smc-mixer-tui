@@ -27,6 +27,16 @@ func (f *fakePW) SetMute(_ context.Context, id uint32, muted bool) error {
 	return nil
 }
 
+// fakeMPRIS records PlayPause calls.
+type fakeMPRIS struct {
+	calls []string
+}
+
+func (f *fakeMPRIS) PlayPause(_ context.Context, playerName string) error {
+	f.calls = append(f.calls, playerName)
+	return nil
+}
+
 // send drives a single message through a fresh Run call.
 func send(d *Dispatcher, msg midi.Msg) {
 	ch := make(chan midi.Msg, 1)
@@ -49,7 +59,7 @@ func abs64(x float64) float64 {
 func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox")
+	d.Bind(0, 42, "Firefox", KindSource, "")
 
 	want := 64.0 / 127.0
 	// Simulate poll: actual volume is at 64/127.
@@ -71,7 +81,7 @@ func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 func TestFaderNoCallBeforePickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox")
+	d.Bind(0, 42, "Firefox", KindSource, "")
 	// Actual volume at 80%; fader sent at 50% — too far, should NOT call SetVolume.
 	d.UpdateActualVolume(0, 0.80)
 	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // 64/127 ≈ 0.504
@@ -87,7 +97,7 @@ func TestFaderNoCallBeforePickup(t *testing.T) {
 func TestFaderDesyncsOnExternalChange(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox")
+	d.Bind(0, 42, "Firefox", KindSource, "")
 
 	// Pick up at 0.5.
 	d.UpdateActualVolume(0, 0.5)
@@ -106,7 +116,7 @@ func TestFaderDesyncsOnExternalChange(t *testing.T) {
 func TestFaderZeroAutoPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 1, "test")
+	d.Bind(0, 1, "test", KindSource, "")
 	// Actual at 0; fader at 0 → auto-syncs (both at floor).
 	d.UpdateActualVolume(0, 0.0)
 	send(d, midi.FaderMsg{Channel: 0, Value: 0})
@@ -118,7 +128,7 @@ func TestFaderZeroAutoPickup(t *testing.T) {
 func TestFaderMaxPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 1, "test")
+	d.Bind(0, 1, "test", KindSource, "")
 	d.UpdateActualVolume(0, 1.0)
 	send(d, midi.FaderMsg{Channel: 0, Value: 127})
 	if !approxEq(pw.volumes[1], 1.0) {
@@ -186,7 +196,7 @@ func TestKnobClampLow(t *testing.T) {
 func TestMuteTogglesBoundStream(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(2, 99, "Spotify")
+	d.Bind(2, 99, "Spotify", KindSource, "")
 
 	send(d, midi.ButtonMsg{Channel: 2, Kind: midi.ButtonMute, Pressed: true})
 	if !pw.mutes[99] {
@@ -202,7 +212,7 @@ func TestMuteTogglesBoundStream(t *testing.T) {
 func TestMuteReleaseIgnored(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 10, "test")
+	d.Bind(0, 10, "test", KindSource, "")
 
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonMute, Pressed: false})
 	if _, called := pw.mutes[10]; called {
@@ -252,12 +262,98 @@ func TestStopToggle(t *testing.T) {
 	}
 }
 
+func TestSoloMutesOtherSameKindChannels(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 10, "App1", KindSource, "")
+	d.Bind(1, 20, "App2", KindSource, "")
+	d.Bind(2, 30, "Mic1", KindMic, "")
+
+	// Solo channel 0 (KindSource).
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
+
+	// Channel 1 (same kind) must be muted; channel 2 (different kind) must not be touched.
+	if !pw.mutes[20] {
+		t.Fatal("channel 1 (same kind) must be muted when channel 0 is soloed")
+	}
+	if _, touched := pw.mutes[30]; touched {
+		t.Fatal("channel 2 (different kind) must not be muted by solo")
+	}
+	if pw.mutes[10] {
+		t.Fatal("soloed channel itself must not be muted")
+	}
+	if !d.Snapshot()[1].SoloMuted {
+		t.Fatal("channel 1 SoloMuted should be true")
+	}
+}
+
+func TestSoloUnsoloRestoresMute(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 10, "App1", KindSource, "")
+	d.Bind(1, 20, "App2", KindSource, "")
+
+	// Solo then unsolo channel 0.
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
+
+	// Both channels should be unmuted (SoloMuted cleared).
+	if pw.mutes[10] || pw.mutes[20] {
+		t.Fatal("both channels must be unmuted after unsolo")
+	}
+	if d.Snapshot()[1].SoloMuted {
+		t.Fatal("channel 1 SoloMuted should be cleared after unsolo")
+	}
+}
+
+func TestSoloPreservesUserMute(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 10, "App1", KindSource, "")
+	d.Bind(1, 20, "App2", KindSource, "")
+
+	// Manually mute channel 1, then solo channel 0, then unsolo channel 0.
+	send(d, midi.ButtonMsg{Channel: 1, Kind: midi.ButtonMute, Pressed: true})
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
+
+	// Channel 1 is still user-muted.
+	if !d.Snapshot()[1].Mute {
+		t.Fatal("user mute on channel 1 must persist after solo cycle")
+	}
+	if !pw.mutes[20] {
+		t.Fatal("channel 1 must remain muted (user mute) after solo cycle")
+	}
+}
+
+func TestStopCallsMPRIS(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	m := &fakeMPRIS{}
+	d.SetMPRISCaller(m)
+	d.Bind(0, 10, "Spotify", KindSource, "Spotify")
+
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
+
+	if len(m.calls) != 1 || m.calls[0] != "Spotify" {
+		t.Fatalf("expected PlayPause(Spotify), got %v", m.calls)
+	}
+}
+
+func TestStopNoMPRISNoCall(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 10, "App", KindSource, "") // no MPRIS name
+
+	// Should not panic; no MPRIS caller set.
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
+}
+
 // — bind/unbind —
 
 func TestBindEvictsDuplicateStream(t *testing.T) {
 	d := New(newFakePW())
-	d.Bind(0, 42, "Firefox")
-	d.Bind(1, 42, "Firefox") // same stream → channel 0 should be released
+	d.Bind(0, 42, "Firefox", KindSource, "")
+	d.Bind(1, 42, "Firefox", KindSource, "") // same stream → channel 0 should be released
 
 	snap := d.Snapshot()
 	if snap[0].StreamID != nil {
@@ -271,7 +367,7 @@ func TestBindEvictsDuplicateStream(t *testing.T) {
 func TestUnbind(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox")
+	d.Bind(0, 42, "Firefox", KindSource, "")
 	d.Unbind(0)
 
 	send(d, midi.FaderMsg{Channel: 0, Value: 64})

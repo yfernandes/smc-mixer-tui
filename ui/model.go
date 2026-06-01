@@ -13,7 +13,7 @@ import (
 // Dispatcher is the subset of dispatcher.Dispatcher used by the TUI.
 type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
-	Bind(ch int, id uint32, name string)
+	Bind(ch int, id uint32, name string, kind dispatcher.NodeKind, mprisName string)
 	Unbind(ch int)
 }
 

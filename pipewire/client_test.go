@@ -137,6 +137,43 @@ func TestParseStreams_FallbackName(t *testing.T) {
 	}
 }
 
+// TestParseStreams_ClientPIDResolution covers the Spotify case: the stream node
+// has no application.process.id, but its client.id points to a Client node
+// that carries pipewire.sec.pid. The parser must resolve the PID and the
+// application.name via the client.
+func TestParseStreams_ClientPIDResolution(t *testing.T) {
+	data := `[
+	  {
+	    "id": 96,
+	    "type": "PipeWire:Interface:Client",
+	    "info": {"props": {
+	      "application.name": "spotify",
+	      "pipewire.sec.pid": 2001934
+	    }}
+	  },
+	  {
+	    "id": 124,
+	    "type": "PipeWire:Interface:Node",
+	    "info": {"props": {
+	      "media.class": "Stream/Output/Audio",
+	      "node.name":   "audio-src",
+	      "client.id":   96
+	    }}
+	  }
+	]`
+	ss, err := parseStreams([]byte(data))
+	if err != nil || len(ss) != 1 {
+		t.Fatalf("err=%v, len=%d", err, len(ss))
+	}
+	s := ss[0]
+	if s.PID != 2001934 {
+		t.Errorf("PID: got %d, want 2001934", s.PID)
+	}
+	if s.Name != "spotify" {
+		t.Errorf("Name: got %q, want %q", s.Name, "spotify")
+	}
+}
+
 func TestParseStreams_InvalidJSON(t *testing.T) {
 	_, err := parseStreams([]byte("{not json}"))
 	if err == nil {

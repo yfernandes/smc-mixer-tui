@@ -2,7 +2,9 @@ package ui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yago/smc-mixer/dispatcher"
 	"github.com/yago/smc-mixer/midi"
+	"github.com/yago/smc-mixer/streams"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -34,7 +36,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.bindMode {
 			if len(m.enriched) > 0 {
 				s := m.enriched[m.bindCursor]
-				m.disp.Bind(m.selected, s.ID, s.Name)
+				mprisName := ""
+				if s.Source == streams.SourceMPRIS {
+					mprisName = s.Name
+				}
+				m.disp.Bind(m.selected, s.ID, s.Name, dispatcher.NodeKind(s.Kind), mprisName)
 			}
 			m.bindMode = false
 		} else {
