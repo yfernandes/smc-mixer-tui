@@ -1,4 +1,4 @@
-module github.com/yago/smc-mixer
+module github.com/yfernandes/smc-mixer-tui
 
 go 1.26.3
 

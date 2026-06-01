@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yago/smc-mixer/pipewire"
+	"github.com/yfernandes/smc-mixer-tui/pipewire"
 )
 
 // Source records which data source provided the identity for a stream.
@@ -144,7 +144,15 @@ func (e *Enricher) Enrich(ctx context.Context) ([]EnrichedStream, error) {
 	if len(e.blacklist) > 0 {
 		filtered := out[:0]
 		for _, es := range out {
-			if _, blocked := e.blacklist[strings.ToLower(es.Name)]; !blocked {
+			lower := strings.ToLower(es.Name)
+			blocked := false
+			for pattern := range e.blacklist {
+				if strings.Contains(lower, pattern) {
+					blocked = true
+					break
+				}
+			}
+			if !blocked {
 				filtered = append(filtered, es)
 			}
 		}

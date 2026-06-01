@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yago/smc-mixer/midi"
+	"github.com/yfernandes/smc-mixer-tui/midi"
 )
 
 // fakePW records the last SetVolume/SetMute call per stream ID.

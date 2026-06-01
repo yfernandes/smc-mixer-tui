@@ -6,7 +6,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/yago/smc-mixer/midi"
+	"github.com/yfernandes/smc-mixer-tui/midi"
 )
 
 // pickupThreshold is the fader-to-actual-volume tolerance for sync detection
@@ -32,6 +32,7 @@ type PipeWire interface {
 type LEDWriter interface {
 	SetButtonLED(ch int, kind midi.ButtonKind, on bool)
 	SetFaderLED(ch int, blink bool)
+	SetFaderPosition(ch int, vol float64)
 	SetGlobalLED(action midi.GlobalAction, on bool)
 }
 
@@ -214,21 +215,36 @@ func (d *Dispatcher) UpdatePlaybackStatus(ch int, playing bool) {
 	}
 }
 
+// syncFaderCap is the maximum position we park the fader at when desyncing.
+const syncFaderCap = 0.25
+
 // UpdateActualVolume records the PipeWire-reported volume for a channel.
 // If the volume differs significantly from the last value we set, the channel
-// is desynced so the user must pick up the fader again.
+// is desynced so the user must pick up the fader again. On desync the fader
+// is moved to min(actualVol, syncFaderCap) so the user has a low reference
+// point to pick up from.
 func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
 	d.mu.Lock()
 	c := &d.channels[ch]
 	c.ActualVolume = vol
+	wasSync := c.Synced
 	if c.Synced && math.Abs(vol-c.LastSetVol) > pickupThreshold {
 		c.Synced = false
 	}
+	justDesynced := wasSync && !c.Synced
 	bound, synced, leds := c.StreamID != nil, c.Synced, d.leds
 	d.mu.Unlock()
 
-	if leds != nil {
-		leds.SetFaderLED(ch, bound && synced)
+	if leds == nil {
+		return
+	}
+	leds.SetFaderLED(ch, bound && synced)
+	if justDesynced {
+		target := vol
+		if target > syncFaderCap {
+			target = syncFaderCap
+		}
+		leds.SetFaderPosition(ch, target)
 	}
 }
 
@@ -366,7 +382,7 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 			}
 		}
 		for i := range d.channels {
-			if d.channels[i].Kind != chKind {
+			if d.channels[i].StreamID == nil || d.channels[i].Kind != chKind {
 				continue
 			}
 			d.channels[i].SoloMuted = anySoloed && !d.channels[i].Solo

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yago/smc-mixer/pipewire"
+	"github.com/yfernandes/smc-mixer-tui/pipewire"
 )
 
 // — fakes —

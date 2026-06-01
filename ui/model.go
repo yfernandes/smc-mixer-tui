@@ -5,9 +5,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/yago/smc-mixer/dispatcher"
-	"github.com/yago/smc-mixer/midi"
-	"github.com/yago/smc-mixer/streams"
+	"github.com/yfernandes/smc-mixer-tui/dispatcher"
+	"github.com/yfernandes/smc-mixer-tui/midi"
+	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
 // Dispatcher is the subset of dispatcher.Dispatcher used by the TUI.

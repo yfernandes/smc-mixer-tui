@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/yago/smc-mixer/dispatcher"
-	"github.com/yago/smc-mixer/streams"
+	"github.com/yfernandes/smc-mixer-tui/dispatcher"
+	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
 // pickupLabel returns the 4-char volume/sync string for the bottom of a strip.

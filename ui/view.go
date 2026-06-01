@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/yago/smc-mixer/dispatcher"
-	"github.com/yago/smc-mixer/streams"
+	"github.com/yfernandes/smc-mixer-tui/dispatcher"
+	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
 func (m Model) View() string {

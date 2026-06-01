@@ -13,12 +13,12 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/yago/smc-mixer/config"
-	"github.com/yago/smc-mixer/dispatcher"
-	"github.com/yago/smc-mixer/midi"
-	"github.com/yago/smc-mixer/pipewire"
-	"github.com/yago/smc-mixer/streams"
-	"github.com/yago/smc-mixer/ui"
+	"github.com/yfernandes/smc-mixer-tui/config"
+	"github.com/yfernandes/smc-mixer-tui/dispatcher"
+	"github.com/yfernandes/smc-mixer-tui/midi"
+	"github.com/yfernandes/smc-mixer-tui/pipewire"
+	"github.com/yfernandes/smc-mixer-tui/streams"
+	"github.com/yfernandes/smc-mixer-tui/ui"
 )
 
 func main() {
@@ -152,7 +152,7 @@ func main() {
 	// Poll PipeWire for actual volumes and MPRIS playback status so strips
 	// react to external changes (keyboard shortcuts, remote controls, etc.).
 	go func() {
-		ticker := time.NewTicker(300 * time.Millisecond)
+		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
