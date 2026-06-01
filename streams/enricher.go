@@ -2,6 +2,7 @@ package streams
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/yago/smc-mixer/pipewire"
@@ -16,15 +17,27 @@ const (
 	SourceMPRIS                  // player name from DBus MPRIS
 )
 
-// EnrichedStream is a live PipeWire audio stream with the best available identity.
+// NodeKind classifies the functional role of an audio node.
+type NodeKind uint8
+
+const (
+	KindSource NodeKind = iota // app playing audio
+	KindMic                    // microphone / capture device
+	KindSink                   // output device / speakers
+)
+
+// EnrichedStream is a live PipeWire audio node with the best available identity.
 type EnrichedStream struct {
-	ID      uint32 // PipeWire node ID
-	PID     uint32 // OS process ID; 0 if unavailable
-	Name    string // best display name
-	BindKey string // stable key for config matching (MPRIS name or app.name)
-	Source  Source
-	Track   string // MPRIS: current track title
-	Artist  string // MPRIS: first listed artist
+	ID        uint32   // PipeWire node ID
+	PID       uint32   // OS process ID; 0 if unavailable
+	Name      string   // best display name
+	BindKey   string   // stable key for config matching (MPRIS name or app.name)
+	Source    Source
+	Kind      NodeKind // functional role: source app, microphone, or output sink
+	Track     string   // MPRIS: current track title
+	Artist    string   // MPRIS: first listed artist
+	WinTitle  string   // Hyprland: window title of the owning process
+	MediaName string   // PipeWire: media.name (e.g. YouTube video title)
 }
 
 // UpdateMsg is a tea-compatible message carrying a refreshed stream list.
@@ -36,6 +49,7 @@ type UpdateMsg []EnrichedStream
 type hyprWindow struct {
 	PID   uint32
 	Class string
+	Title string
 }
 
 type mprisPlayer struct {
@@ -50,9 +64,10 @@ type mprisPlayer struct {
 // Enricher gathers PipeWire streams and enriches them with identity from
 // Hyprland and MPRIS, falling back to PipeWire app.name when neither matches.
 type Enricher struct {
-	pw    func(context.Context) ([]pipewire.Stream, error)
-	hypr  func(context.Context) ([]hyprWindow, error)
-	mpris func(context.Context) ([]mprisPlayer, error)
+	pw        func(context.Context) ([]pipewire.Stream, error)
+	hypr      func(context.Context) ([]hyprWindow, error)
+	mpris     func(context.Context) ([]mprisPlayer, error)
+	blacklist map[string]struct{} // names to suppress from Enrich output
 }
 
 // New returns an Enricher wired to live system data.
@@ -62,6 +77,16 @@ func New(pw *pipewire.Client) *Enricher {
 		hypr:  queryHyprland,
 		mpris: queryMPRIS,
 	}
+}
+
+// SetBlacklist replaces the set of stream names hidden from Enrich output.
+// Names are matched case-insensitively against the final display name.
+func (e *Enricher) SetBlacklist(names []string) {
+	m := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		m[strings.ToLower(n)] = struct{}{}
+	}
+	e.blacklist = m
 }
 
 // Enrich fetches streams from all sources and returns the enriched list.
@@ -91,17 +116,20 @@ func (e *Enricher) Enrich(ctx context.Context) ([]EnrichedStream, error) {
 	out := make([]EnrichedStream, 0, len(pwStreams))
 	for _, s := range pwStreams {
 		es := EnrichedStream{
-			ID:      s.ID,
-			PID:     s.PID,
-			Name:    s.Name,
-			BindKey: s.Name,
-			Source:  SourcePipeWire,
+			ID:        s.ID,
+			PID:       s.PID,
+			Name:      s.Name,
+			BindKey:   s.Name,
+			Source:    SourcePipeWire,
+			Kind:      NodeKind(s.Kind), // pipewire.KindSource/Mic/Sink share the same iota values
+			MediaName: s.MediaName,
 		}
-		// Hyprland class overrides PipeWire name
+		// Hyprland class overrides PipeWire name; always capture window title
 		if w, ok := hyprByPID[s.PID]; ok {
 			es.Name = w.Class
 			es.BindKey = w.Class
 			es.Source = SourceHyprland
+			es.WinTitle = w.Title
 		}
 		// MPRIS overrides everything (best source)
 		if p, ok := mprisByPID[s.PID]; ok {
@@ -113,6 +141,16 @@ func (e *Enricher) Enrich(ctx context.Context) ([]EnrichedStream, error) {
 		}
 		out = append(out, es)
 	}
+	if len(e.blacklist) > 0 {
+		filtered := out[:0]
+		for _, es := range out {
+			if _, blocked := e.blacklist[strings.ToLower(es.Name)]; !blocked {
+				filtered = append(filtered, es)
+			}
+		}
+		out = filtered
+	}
+
 	return out, nil
 }
 

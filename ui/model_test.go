@@ -199,11 +199,11 @@ func TestSnapshotMsgUpdatesChannels(t *testing.T) {
 	m := makeModel(disp, nil)
 
 	var snap [8]dispatcher.Channel
-	snap[2].Volume = 0.75
+	snap[2].ActualVolume = 0.75
 	m = upd(m, snapshotMsg(snap))
 
-	if m.channels[2].Volume != 0.75 {
-		t.Fatalf("channel 2 volume = %.2f, want 0.75", m.channels[2].Volume)
+	if m.channels[2].ActualVolume != 0.75 {
+		t.Fatalf("channel 2 actual volume = %.2f, want 0.75", m.channels[2].ActualVolume)
 	}
 }
 
@@ -265,8 +265,8 @@ func TestViewInBindModeShowsBindBar(t *testing.T) {
 	m := makeModel(&fakeDisp{}, ss)
 	m = upd(m, kEnter()) // enter bind mode
 	v := m.View()
-	if !contains(v, "Binding") {
-		t.Fatal("View() in bind mode should contain bind bar text")
+	if !contains(v, "Bind CH") {
+		t.Fatal("View() in bind mode should contain bind panel header")
 	}
 }
 

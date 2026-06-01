@@ -27,10 +27,24 @@ func parseStreams(data []byte) ([]Stream, error) {
 		if n.Type != "PipeWire:Interface:Node" {
 			continue
 		}
-		if rawStr(n.Info.Props["media.class"]) != "Stream/Output/Audio" {
+		class := rawStr(n.Info.Props["media.class"])
+		var kind NodeKind
+		switch class {
+		case "Stream/Output/Audio":
+			kind = KindSource
+		case "Stream/Input/Audio", "Audio/Source", "Audio/Source/Virtual":
+			kind = KindMic
+		case "Audio/Sink", "Audio/Sink/Virtual":
+			kind = KindSink
+		default:
 			continue
 		}
-		name := rawStr(n.Info.Props["application.name"])
+
+		// Hardware devices expose a human-readable node.description; prefer it.
+		name := rawStr(n.Info.Props["node.description"])
+		if name == "" {
+			name = rawStr(n.Info.Props["application.name"])
+		}
 		if name == "" {
 			name = rawStr(n.Info.Props["node.name"])
 		}
@@ -38,9 +52,11 @@ func parseStreams(data []byte) ([]Stream, error) {
 			name = fmt.Sprintf("stream-%d", n.ID)
 		}
 		streams = append(streams, Stream{
-			ID:   n.ID,
-			Name: name,
-			PID:  rawUint32(n.Info.Props["application.process.id"]),
+			ID:        n.ID,
+			Name:      name,
+			MediaName: rawStr(n.Info.Props["media.name"]),
+			PID:       rawUint32(n.Info.Props["application.process.id"]),
+			Kind:      kind,
 		})
 	}
 	return streams, nil

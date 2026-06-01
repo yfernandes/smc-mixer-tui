@@ -8,11 +8,22 @@ import (
 	"strings"
 )
 
-// Stream is an active PipeWire audio playback stream (sink-input).
+// NodeKind classifies the functional role of a PipeWire audio node.
+type NodeKind uint8
+
+const (
+	KindSource NodeKind = iota // app playing audio  (Stream/Output/Audio)
+	KindMic                    // microphone / capture (Audio/Source, Stream/Input/Audio)
+	KindSink                   // output device / speakers (Audio/Sink)
+)
+
+// Stream is an active PipeWire audio node (playback, capture, or hardware device).
 type Stream struct {
-	ID   uint32
-	Name string // application.name → node.name → "stream-<id>"
-	PID  uint32 // application.process.id; 0 if absent
+	ID        uint32
+	Name      string   // application.name → node.description → node.name → "stream-<id>"
+	MediaName string   // media.name (e.g. YouTube video title, track name)
+	PID       uint32   // application.process.id; 0 if absent
+	Kind      NodeKind // functional role of the node
 }
 
 // Client wraps wpctl and pw-dump subprocess calls.

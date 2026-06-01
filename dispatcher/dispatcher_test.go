@@ -46,32 +46,80 @@ func abs64(x float64) float64 {
 
 // — fader tests —
 
-func TestFaderSetsVolume(t *testing.T) {
+func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 	d.Bind(0, 42, "Firefox")
 
+	want := 64.0 / 127.0
+	// Simulate poll: actual volume is at 64/127.
+	d.UpdateActualVolume(0, want)
+	// Fader reaches the same position → picks up → calls SetVolume.
 	send(d, midi.FaderMsg{Channel: 0, Value: 64})
 
-	want := 64.0 / 127.0
 	if !approxEq(pw.volumes[42], want) {
 		t.Fatalf("SetVolume got %.9f, want %.9f", pw.volumes[42], want)
 	}
-	if !approxEq(d.Snapshot()[0].Volume, want) {
-		t.Fatalf("snapshot volume = %.9f, want %.9f", d.Snapshot()[0].Volume, want)
+	if !approxEq(d.Snapshot()[0].FaderPos, want) {
+		t.Fatalf("FaderPos = %.9f, want %.9f", d.Snapshot()[0].FaderPos, want)
+	}
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("channel should be synced after pickup")
 	}
 }
 
-func TestFaderZeroAndMax(t *testing.T) {
+func TestFaderNoCallBeforePickup(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Firefox")
+	// Actual volume at 80%; fader sent at 50% — too far, should NOT call SetVolume.
+	d.UpdateActualVolume(0, 0.80)
+	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // 64/127 ≈ 0.504
+
+	if _, called := pw.volumes[42]; called {
+		t.Fatal("SetVolume must not be called before fader picks up actual volume")
+	}
+	if d.Snapshot()[0].Synced {
+		t.Fatal("channel should not be synced when fader is far from actual volume")
+	}
+}
+
+func TestFaderDesyncsOnExternalChange(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Firefox")
+
+	// Pick up at 0.5.
+	d.UpdateActualVolume(0, 0.5)
+	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // ≈0.504, within threshold
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("should be synced after pickup")
+	}
+
+	// External change: keyboard shortcut lowers volume significantly.
+	d.UpdateActualVolume(0, 0.2)
+	if d.Snapshot()[0].Synced {
+		t.Fatal("external volume change should desync the channel")
+	}
+}
+
+func TestFaderZeroAutoPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 	d.Bind(0, 1, "test")
-
+	// Actual at 0; fader at 0 → auto-syncs (both at floor).
+	d.UpdateActualVolume(0, 0.0)
 	send(d, midi.FaderMsg{Channel: 0, Value: 0})
 	if pw.volumes[1] != 0.0 {
 		t.Fatalf("value 0 → volume %.9f, want 0", pw.volumes[1])
 	}
+}
 
+func TestFaderMaxPickup(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 1, "test")
+	d.UpdateActualVolume(0, 1.0)
 	send(d, midi.FaderMsg{Channel: 0, Value: 127})
 	if !approxEq(pw.volumes[1], 1.0) {
 		t.Fatalf("value 127 → volume %.9f, want 1.0", pw.volumes[1])
@@ -87,8 +135,8 @@ func TestFaderUnboundUpdatesStateOnly(t *testing.T) {
 	if len(pw.volumes) != 0 {
 		t.Fatal("unbound channel should not call SetVolume")
 	}
-	if !approxEq(d.Snapshot()[0].Volume, 100.0/127.0) {
-		t.Fatal("state should update even when unbound")
+	if !approxEq(d.Snapshot()[0].FaderPos, 100.0/127.0) {
+		t.Fatal("FaderPos should update even when unbound")
 	}
 }
 
@@ -205,6 +253,20 @@ func TestStopToggle(t *testing.T) {
 }
 
 // — bind/unbind —
+
+func TestBindEvictsDuplicateStream(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 42, "Firefox")
+	d.Bind(1, 42, "Firefox") // same stream → channel 0 should be released
+
+	snap := d.Snapshot()
+	if snap[0].StreamID != nil {
+		t.Fatal("channel 0 should be unbound after stream was claimed by channel 1")
+	}
+	if snap[1].StreamID == nil || *snap[1].StreamID != 42 {
+		t.Fatal("channel 1 should hold the stream")
+	}
+}
 
 func TestUnbind(t *testing.T) {
 	pw := newFakePW()

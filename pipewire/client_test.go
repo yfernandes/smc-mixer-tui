@@ -87,7 +87,8 @@ const fixtureJSON = `[
     "info": {
       "props": {
         "media.class": "Audio/Sink",
-        "application.name": "should-be-skipped"
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.name": "alsa_output.pci-0000_00_1f.3"
       }
     }
   }
@@ -98,17 +99,21 @@ func TestParseStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(streams) != 2 {
-		t.Fatalf("want 2 streams, got %d: %v", len(streams), streams)
+	if len(streams) != 3 {
+		t.Fatalf("want 3 streams, got %d: %v", len(streams), streams)
 	}
 
 	// Node with application.name wins over node.name; string-encoded PID is parsed
-	if streams[0].ID != 97 || streams[0].Name != "Firefox" || streams[0].PID != 1234 {
+	if streams[0].ID != 97 || streams[0].Name != "Firefox" || streams[0].PID != 1234 || streams[0].Kind != KindSource {
 		t.Errorf("streams[0]: got %+v", streams[0])
 	}
 	// Node without application.name falls back to node.name; numeric PID is parsed
-	if streams[1].ID != 42 || streams[1].Name != "mpv" || streams[1].PID != 5678 {
+	if streams[1].ID != 42 || streams[1].Name != "mpv" || streams[1].PID != 5678 || streams[1].Kind != KindSource {
 		t.Errorf("streams[1]: got %+v", streams[1])
+	}
+	// Sink node uses node.description and has KindSink
+	if streams[2].ID != 11 || streams[2].Name != "Built-in Audio Analog Stereo" || streams[2].Kind != KindSink {
+		t.Errorf("streams[2]: got %+v", streams[2])
 	}
 }
 

@@ -2,10 +2,16 @@ package dispatcher
 
 import (
 	"context"
+	"log"
+	"math"
 	"sync"
 
 	"github.com/yago/smc-mixer/midi"
 )
+
+// pickupThreshold is the fader-to-actual-volume tolerance for sync detection
+// and external-change detection (≈2 MIDI steps out of 127).
+const pickupThreshold = 2.0 / 127.0
 
 // PipeWire is the subset of pipewire.Client used by the dispatcher.
 type PipeWire interface {
@@ -22,14 +28,17 @@ type LEDWriter interface {
 
 // Channel holds the runtime state for one mixer channel strip.
 type Channel struct {
-	StreamID *uint32 // nil if unbound
-	Name     string  // display name; "" if unbound
-	Volume   float64 // 0.0–1.0, last fader position
-	Knob     int     // 0–127, accumulated relative position; starts at 64
-	Mute     bool
-	Solo     bool
-	Rec      bool
-	Stop     bool
+	StreamID     *uint32 // nil if unbound
+	Name         string  // display name; "" if unbound
+	ActualVolume float64 // volume reported by PipeWire — the source of truth
+	FaderPos     float64 // physical hardware fader position, 0.0–1.0
+	LastSetVol   float64 // last volume we sent to PipeWire; -1 = never
+	Synced       bool    // fader has picked up ActualVolume; controls PipeWire when true
+	Knob         int     // 0–127, accumulated relative position; starts at 64
+	Mute         bool
+	Solo         bool
+	Rec          bool
+	Stop         bool
 }
 
 // globalLEDActions lists the transport actions that have LEDs, in index order.
@@ -83,7 +92,8 @@ func (d *Dispatcher) SyncLEDs() {
 		leds.SetButtonLED(ch, midi.ButtonSolo, c.Solo)
 		leds.SetButtonLED(ch, midi.ButtonMute, c.Mute)
 		leds.SetButtonLED(ch, midi.ButtonStop, c.Stop)
-		leds.SetFaderLED(ch, c.StreamID != nil)
+		// Fader LED blinks when bound AND synced; off when unbound or awaiting pickup.
+		leds.SetFaderLED(ch, c.StreamID != nil && c.Synced)
 	}
 	for i, action := range globalLEDActions {
 		leds.SetGlobalLED(action, globals[i])
@@ -119,15 +129,35 @@ func (d *Dispatcher) OnGlobal(m midi.GlobalMsg) {
 }
 
 // Bind assigns a PipeWire stream to a channel strip.
+// If the stream is already bound to a different channel, that channel is
+// unbound first — a stream may only be controlled by one channel at a time.
+// The new channel starts unsynced: the fader must reach the actual volume
+// before it takes control of PipeWire.
 func (d *Dispatcher) Bind(ch int, id uint32, name string) {
 	d.mu.Lock()
+	// Release any other channel already holding this stream.
+	var evicted []int
+	for i := range d.channels {
+		if i != ch && d.channels[i].StreamID != nil && *d.channels[i].StreamID == id {
+			d.channels[i].StreamID = nil
+			d.channels[i].Name = ""
+			d.channels[i].Synced = false
+			evicted = append(evicted, i)
+		}
+	}
 	d.channels[ch].StreamID = &id
 	d.channels[ch].Name = name
+	d.channels[ch].Synced = false
+	d.channels[ch].ActualVolume = 0
+	d.channels[ch].LastSetVol = -1
 	leds := d.leds
 	d.mu.Unlock()
 
 	if leds != nil {
-		leds.SetFaderLED(ch, true)
+		for _, i := range evicted {
+			leds.SetFaderLED(i, false)
+		}
+		leds.SetFaderLED(ch, false) // off until fader picks up
 	}
 }
 
@@ -136,11 +166,30 @@ func (d *Dispatcher) Unbind(ch int) {
 	d.mu.Lock()
 	d.channels[ch].StreamID = nil
 	d.channels[ch].Name = ""
+	d.channels[ch].Synced = false
 	leds := d.leds
 	d.mu.Unlock()
 
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
+	}
+}
+
+// UpdateActualVolume records the PipeWire-reported volume for a channel.
+// If the volume differs significantly from the last value we set, the channel
+// is desynced so the user must pick up the fader again.
+func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
+	d.mu.Lock()
+	c := &d.channels[ch]
+	c.ActualVolume = vol
+	if c.Synced && math.Abs(vol-c.LastSetVol) > pickupThreshold {
+		c.Synced = false
+	}
+	bound, synced, leds := c.StreamID != nil, c.Synced, d.leds
+	d.mu.Unlock()
+
+	if leds != nil {
+		leds.SetFaderLED(ch, bound && synced)
 	}
 }
 
@@ -179,15 +228,32 @@ func (d *Dispatcher) dispatch(ctx context.Context, msg midi.Msg) {
 }
 
 func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
-	vol := float64(m.Value) / 127.0
+	faderPos := float64(m.Value) / 127.0
 
 	d.mu.Lock()
-	d.channels[m.Channel].Volume = vol
-	id := d.channels[m.Channel].StreamID // *uint32; each Bind allocates a new slot
+	c := &d.channels[m.Channel]
+	c.FaderPos = faderPos
+	if !c.Synced && math.Abs(faderPos-c.ActualVolume) < pickupThreshold {
+		c.Synced = true
+	}
+	synced, id, leds := c.Synced, c.StreamID, d.leds
+	if synced {
+		c.LastSetVol = faderPos
+	}
 	d.mu.Unlock()
 
-	if id != nil {
-		_ = d.pw.SetVolume(ctx, *id, vol)
+	if leds != nil {
+		leds.SetFaderLED(m.Channel, id != nil && synced)
+	}
+
+	if !synced {
+		return // fader has not yet picked up the actual volume
+	}
+	if id == nil {
+		return
+	}
+	if err := d.pw.SetVolume(ctx, *id, faderPos); err != nil {
+		log.Printf("fader ch%d: SetVolume(%d, %.3f): %v", m.Channel, *id, faderPos, err)
 	}
 }
 
@@ -237,6 +303,8 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 		leds.SetButtonLED(m.Channel, m.Kind, ledState)
 	}
 	if m.Kind == midi.ButtonMute && id != nil {
-		_ = d.pw.SetMute(ctx, *id, muted)
+		if err := d.pw.SetMute(ctx, *id, muted); err != nil {
+			log.Printf("button ch%d mute: SetMute(%d, %v): %v", m.Channel, *id, muted, err)
+		}
 	}
 }

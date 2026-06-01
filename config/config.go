@@ -16,18 +16,29 @@ import (
 //	[midi]
 //	device = "/dev/midi1"   # omit for auto-detect
 //
+//	[streams]
+//	blacklist = ["pavucontrol", "pw-cat"]   # names to hide from the bind panel
+//
 //	[channels]
 //	0 = "Firefox"
 //	2 = "Spotify"
 //	5 = "discord"
 type Config struct {
 	MIDI     MIDIConfig        `toml:"midi"`
+	Streams  StreamsConfig     `toml:"streams"`
 	Channels map[string]string `toml:"channels"` // key "0"–"7" → stream name substring
 }
 
 // MIDIConfig holds hardware settings.
 type MIDIConfig struct {
 	Device string `toml:"device"` // e.g. "/dev/midi1"; "" triggers auto-detect
+}
+
+// StreamsConfig controls which audio nodes are surfaced in the UI.
+type StreamsConfig struct {
+	// Blacklist is a list of exact stream names to hide from the bind panel.
+	// When empty, the built-in defaults are used (e.g. "pavucontrol").
+	Blacklist []string `toml:"blacklist"`
 }
 
 // DefaultPath returns the canonical config file location:

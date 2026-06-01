@@ -49,6 +49,12 @@ func main() {
 	pw := pipewire.New()
 	enricher := streams.New(pw)
 
+	blacklist := cfg.Streams.Blacklist
+	if len(blacklist) == 0 {
+		blacklist = []string{"pavucontrol"} // built-in default; override via [streams] blacklist in config
+	}
+	enricher.SetBlacklist(blacklist)
+
 	initial, err := enricher.Enrich(ctx)
 	if err != nil {
 		die("initial stream discovery: %v", err)
@@ -138,6 +144,30 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Second):
+			}
+		}
+	}()
+
+	// Poll PipeWire for actual volumes so strips react to external changes.
+	go func() {
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				snap := disp.Snapshot()
+				for ch, c := range snap {
+					if c.StreamID == nil {
+						continue
+					}
+					vol, _, err := pw.GetVolume(ctx, *c.StreamID)
+					if err != nil {
+						continue
+					}
+					disp.UpdateActualVolume(ch, vol)
+				}
 			}
 		}
 	}()

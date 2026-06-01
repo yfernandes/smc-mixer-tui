@@ -12,23 +12,16 @@ const (
 )
 
 var (
-	colorAccent = lipgloss.Color("69")  // blue — selected border
-	colorDim    = lipgloss.Color("240") // gray — unbound / inactive
-	colorHot    = lipgloss.Color("196") // red  — rec
-	colorWarn   = lipgloss.Color("214") // orange — mute
-	colorGold   = lipgloss.Color("226") // yellow — solo / bind mode
-	colorGreen  = lipgloss.Color("82")  // green — playing
-	colorFG     = lipgloss.Color("255") // white text on coloured buttons
-
-	stripNormal = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorDim).
-			Padding(0, 1)
-
-	stripSelected = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorAccent).
-			Padding(0, 1)
+	colorAccent = lipgloss.Color("69")       // blue — selected border
+	colorDim    = lipgloss.Color("240")      // gray — unbound / inactive
+	colorHot    = lipgloss.Color("196")      // red  — rec
+	colorWarn   = lipgloss.Color("214")      // orange — mute
+	colorGold   = lipgloss.Color("226")      // yellow — solo / bind mode
+	colorGreen  = lipgloss.Color("82")       // green — playing
+	colorFG     = lipgloss.Color("255")      // white text on coloured buttons
+	colorMic    = lipgloss.Color("#FF4444")  // red   — microphone / capture
+	colorSrc    = lipgloss.Color("#44FF88")  // green — audio source / app playing
+	colorSink   = lipgloss.Color("#4488FF")  // blue  — output device / sink
 
 	stripUnbound = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -48,6 +41,14 @@ var (
 			BorderForeground(colorGold).
 			Padding(0, 1)
 
+	// Per-kind strip borders: unselected / selected.
+	stripMic         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorMic).Foreground(colorDim).Padding(0, 1)
+	stripMicSelected = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorMic).Padding(0, 1)
+	stripSrcBound    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSrc).Foreground(colorDim).Padding(0, 1)
+	stripSrcSelected = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSrc).Padding(0, 1)
+	stripSinkBound   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSink).Foreground(colorDim).Padding(0, 1)
+	stripSinkSelected= lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSink).Padding(0, 1)
+
 	btnInactive = lipgloss.NewStyle().Foreground(colorDim)
 	btnMuteOn   = lipgloss.NewStyle().Background(colorWarn).Foreground(colorFG).Bold(true)
 	btnSoloOn   = lipgloss.NewStyle().Background(colorGold).Foreground(lipgloss.Color("0")).Bold(true)
@@ -60,4 +61,8 @@ var (
 	globalBarStyle = lipgloss.NewStyle().Foreground(colorDim)
 	bindBarStyle   = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	styleNoDevice  = lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
+
+	bindCursorStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
+	bindItemStyle   = lipgloss.NewStyle()
+	bindDimStyle    = lipgloss.NewStyle().Foreground(colorDim)
 )

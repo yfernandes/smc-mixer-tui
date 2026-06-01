@@ -22,10 +22,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up":
 		if m.bindMode && len(m.enriched) > 0 {
 			m.bindCursor = (m.bindCursor + len(m.enriched) - 1) % len(m.enriched)
+			m.clampBindScroll()
 		}
 	case "down":
 		if m.bindMode && len(m.enriched) > 0 {
 			m.bindCursor = (m.bindCursor + 1) % len(m.enriched)
+			m.clampBindScroll()
 		}
 
 	case "enter":
@@ -38,6 +40,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.bindMode = true
 			m.bindCursor = 0
+			m.bindScroll = 0
 		}
 
 	case "esc":
