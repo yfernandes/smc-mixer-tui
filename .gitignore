@@ -1,0 +1,17 @@
+# Go binaries
+smc-mixer
+main
+
+# Build output
+dist/
+out/
+
+# Env files
+.env
+.env.*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/

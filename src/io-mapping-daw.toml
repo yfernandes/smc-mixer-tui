@@ -1,0 +1,77 @@
+# Content is status,cc,value
+[global]
+play = 90,94
+pause = 90,93
+record = 90,95
+previous = 90,91
+next = 90,92
+seek-back = 90,46
+seek-forward = 90,47
+up = 90,96
+down = 90,97
+left = 90,98
+right = 90,99
+
+[channel-0]
+rec-button = 90,0,0|127
+solo-button = 90,8,0|127
+mute-button = 90,16,0|127
+stop-button = 90,24,0|127
+fader = "e0",0,0-127
+knob = b0,16,1|65
+
+[channel-1]
+rec-button = 90,1,0|127
+solo-button = 90,9,0|127
+mute-button = 90,17,0|127
+stop-button = 90,25,0|127
+fader = "e1",0,0-127
+knob = b0,17,1|65
+
+[channel-2]
+rec-button = 90,2,0|127
+solo-button = 90,10,0|127
+mute-button = 90,18,0|127
+stop-button = 90,26,0|127
+fader = "e2",0,0-127
+knob = b0,18,1|65
+
+[channel-3]
+rec-button = 90,3,0|127
+solo-button = 90,11,0|127
+mute-button = 90,19,0|127
+stop-button = 90,27,0|127
+fader = "e3",0,0-127
+knob = b0,19,1|65
+
+[channel-4]
+rec-button = 90,4,0|127
+solo-button = 90,12,0|127
+mute-button = 90,20,0|127
+stop-button = 90,28,0|127
+fader = "e4",0,0-127
+knob = b0,20,1|65
+
+[channel-5]
+rec-button = 90,5,0|127
+solo-button = 90,13,0|127
+mute-button = 90,21,0|127
+stop-button = 90,29,0|127
+fader = "e5",0,0-127
+knob = b0,21,1|65
+
+[channel-6]
+rec-button = 90,6,0|127
+solo-button = 90,14,0|127
+mute-button = 90,22,0|127
+stop-button = 90,30,0|127
+fader = "e6",0,0-127
+knob = b0,22,1|65
+
+[channel-7]
+rec-button = 90,7,0|127
+solo-button = 90,15,0|127
+mute-button = 90,23,0|127
+stop-button = 90,31,0|127
+fader = "e1",0,0-127
+knob = b0,23,1|65

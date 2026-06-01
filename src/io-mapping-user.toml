@@ -1,0 +1,85 @@
+[global]
+play = 52
+pause = 53
+record = 54
+previous = 55
+next = 56
+seek-back = 57
+seek-forward = 58
+up = 59
+down = 60
+left = 61
+right = 62
+
+# content is always cc,value
+# [channel-X]
+# mute-button = 20+X, 0 | 127 # Meaning 0 OR 127
+# solo-button = 28+X, 0 | 127 # Meaning 0 OR 127
+# rec-button =  36+X, 0 | 127 # Meaning 0 OR 127
+# stop-button = 44+X, 0 | 127 # Meaning 0 OR 127
+# fader =       40+X, 0 - 127 # Meaning 0 THROUGH 127
+# knob =        30+X, 0 - 127 # Meaning 0 THROUGH 127
+
+[channel-0]
+mute-button = 20,0|127
+solo-button = 28,0|127
+rec-button = 36,0|127
+stop-button = 44,0|127
+fader = 40,0-127
+knob = 30,0-127
+
+[channel-1]
+mute-button = 21,0|127
+solo-button = 29,0|127
+rec-button = 37,0|127
+stop-button = 45,0|127
+fader = 41,0-127
+knob = 31,0-127
+
+[channel-2]
+mute-button = 22,0|127
+solo-button = 30,0|127
+rec-button = 38,0|127
+stop-button = 46,0|127
+fader = 42,0-127
+knob = 32,0-127
+
+[channel-3]
+mute-button = 23,0|127
+solo-button = 31,0|127
+rec-button = 39,0|127
+stop-button = 47,0|127
+fader = 43,0-127
+knob = 33,0-127
+
+[channel-4]
+mute-button = 24,0|127
+solo-button = 32,0|127
+rec-button = 40,0|127
+stop-button = 48,0|127
+fader = 44,0-127
+knob = 34,0-127
+
+[channel-5]
+mute-button = 25,0|127
+solo-button = 33,0|127
+rec-button = 41,0|127
+stop-button = 49,0|127
+fader = 45,0-127
+knob = 35,0-127
+
+[channel-6]
+mute-button = 26,0|127
+solo-button = 34,0|127
+rec-button = 42,0|127
+stop-button = 50,0|127
+fader = 46,0-127
+knob = 36,0-127
+
+[channel-7]
+mute-button = 27,0|127
+solo-button = 35,0|127
+rec-button = 43,0|127
+stop-button = 51,0|127
+fader = 47,0-127
+knob = 37,0-127
