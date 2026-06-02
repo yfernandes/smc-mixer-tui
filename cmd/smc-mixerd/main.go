@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -71,133 +70,146 @@ func main() {
 		}
 	}()
 
-	var (
-		enrichedMu   sync.Mutex
-		lastEnriched = initial
-	)
-
 	midiCh := make(chan midi.Msg, 64)
 	dispCh := make(chan midi.Msg, 64)
 
-	go func() {
-		for msg := range midiCh {
-			switch m := msg.(type) {
-			case midi.GlobalMsg:
-				srv.BroadcastGlobal(m)
-				disp.OnGlobal(m)
-			default:
-				select {
-				case dispCh <- msg:
-				default:
-				}
-			}
-		}
-		close(dispCh)
-	}()
-
+	go routeMIDI(midiCh, dispCh, srv, disp)
 	go disp.Run(ctx, dispCh)
+	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, midiCh)
+	go runVolumePoller(ctx, pw, disp, srv)
+	go pollStreams(ctx, enricher, cfg, disp, srv, manageCrossfaders)
 
-	go func() {
-		defer close(midiCh)
-		for {
-			dev := fixedDevice
-			if dev == "" {
-				srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: false})
-				for {
-					var ferr error
-					dev, ferr = midi.FindDevice("SMC")
-					if ferr == nil {
-						break
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(2 * time.Second):
-					}
-				}
-			}
+	<-ctx.Done()
+}
 
-			log.Printf("MIDI device: %s", dev)
-			srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: true, Device: dev})
-
-			w, werr := midi.OpenWriter(dev)
-			if werr != nil {
-				log.Printf("MIDI LED writer: %v", werr)
-			} else {
-				disp.SetLEDWriter(w)
-				disp.SyncLEDs()
-			}
-
-			listener := midi.NewListener(dev)
-			if err := listener.Run(ctx, midiCh); err != nil && ctx.Err() == nil {
-				log.Printf("MIDI listener: %v", err)
-			}
-
-			if w != nil {
-				disp.SetLEDWriter(nil)
-				w.Close()
-			}
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			log.Printf("MIDI device disconnected, waiting for reconnect…")
-			srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: false})
+func routeMIDI(midiCh <-chan midi.Msg, dispCh chan<- midi.Msg, srv *daemon.Server, disp *dispatcher.Dispatcher) {
+	for msg := range midiCh {
+		switch m := msg.(type) {
+		case midi.GlobalMsg:
+			srv.BroadcastGlobal(m)
+			disp.OnGlobal(m)
+		default:
 			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Second):
+			case dispCh <- msg:
+			default:
 			}
 		}
-	}()
+	}
+	close(dispCh)
+}
 
-	go func() {
-		ticker := time.NewTicker(50 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
+func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Server, disp *dispatcher.Dispatcher, midiCh chan<- midi.Msg) {
+	defer close(midiCh)
+	for {
+		dev := fixedDevice
+		if dev == "" {
+			var ok bool
+			dev, ok = waitForMIDIDevice(ctx, srv)
+			if !ok {
 				return
-			case <-ticker.C:
-				snap := disp.Snapshot()
-				changed := false
-				for ch, c := range snap {
-					if c.StreamID == nil {
-						continue
-					}
-					vol, _, err := pw.GetVolume(ctx, *c.StreamID)
-					if err != nil {
-						continue
-					}
-					disp.UpdateActualVolume(ch, vol)
-					if c.MPRISName != "" {
-						disp.UpdatePlaybackStatus(ch, streams.IsPlaying(ctx, c.MPRISName))
-					}
-					changed = true
-				}
-				if changed {
-					srv.BroadcastSnapshot(disp.Snapshot())
-				}
 			}
 		}
-	}()
 
-	go enricher.Poll(ctx, 2*time.Second, func(msg streams.UpdateMsg) {
+		log.Printf("MIDI device: %s", dev)
+		srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: true, Device: dev})
+
+		w, werr := midi.OpenWriter(dev)
+		if werr != nil {
+			log.Printf("MIDI LED writer: %v", werr)
+		} else {
+			disp.SetLEDWriter(w)
+			disp.SyncLEDs()
+		}
+
+		listener := midi.NewListener(dev)
+		if err := listener.Run(ctx, midiCh); err != nil && ctx.Err() == nil {
+			log.Printf("MIDI listener: %v", err)
+		}
+
+		if w != nil {
+			disp.SetLEDWriter(nil)
+			w.Close()
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		log.Printf("MIDI device disconnected, waiting for reconnect…")
+		srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: false})
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func waitForMIDIDevice(ctx context.Context, srv *daemon.Server) (string, bool) {
+	srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: false})
+	for {
+		dev, err := midi.FindDevice("SMC")
+		if err == nil {
+			return dev, true
+		}
+		select {
+		case <-ctx.Done():
+			return "", false
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func runVolumePoller(ctx context.Context, pw *pipewire.Client, disp *dispatcher.Dispatcher, srv *daemon.Server) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if pollChannelVolumes(ctx, pw, disp) {
+				srv.BroadcastSnapshot(disp.Snapshot())
+			}
+		}
+	}
+}
+
+func pollChannelVolumes(ctx context.Context, pw *pipewire.Client, disp *dispatcher.Dispatcher) bool {
+	snap := disp.Snapshot()
+	changed := false
+	for ch, c := range snap {
+		if c.StreamID == nil {
+			continue
+		}
+		vol, _, err := pw.GetVolume(ctx, *c.StreamID)
+		if err != nil {
+			continue
+		}
+		disp.UpdateActualVolume(ch, vol)
+		if c.MPRISName != "" {
+			disp.UpdatePlaybackStatus(ch, streams.IsPlaying(ctx, c.MPRISName))
+		}
+		changed = true
+	}
+	return changed
+}
+
+func pollStreams(
+	ctx context.Context,
+	enricher *streams.Enricher,
+	cfg *config.Config,
+	disp *dispatcher.Dispatcher,
+	srv *daemon.Server,
+	manageCrossfaders func(context.Context, [8]dispatcher.Channel, []streams.EnrichedStream),
+) {
+	enricher.Poll(ctx, 2*time.Second, func(msg streams.UpdateMsg) {
 		ss := []streams.EnrichedStream(msg)
-
-		enrichedMu.Lock()
-		lastEnriched = ss
-		enrichedMu.Unlock()
-
 		applyBindings(cfg, disp, ss)
 		manageCrossfaders(ctx, disp.Snapshot(), ss)
 		srv.BroadcastStreams(ss)
 		srv.BroadcastSnapshot(disp.Snapshot())
 	})
-
-	<-ctx.Done()
-	_ = lastEnriched
 }
 
 func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
@@ -207,22 +219,34 @@ func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams
 		if chCfg == nil {
 			continue
 		}
-		if snap[ch].StreamID != nil && streamLive(*snap[ch].StreamID, ss) {
+		if channelBindingLive(snap[ch], ss) {
 			continue
 		}
-		matchStr := cfg.MatchStringFor(ch)
-		for _, s := range ss {
-			if !streamMatchesBind(s, chCfg.Bind, matchStr) {
-				continue
-			}
-			mprisName := ""
-			if s.Source == streams.SourceMPRIS {
-				mprisName = s.Name
-			}
-			disp.Bind(ch, s.ID, s.Name, s.Kind, mprisName)
-			break
+		if s := bindingCandidate(ch, cfg, chCfg.Bind, ss); s != nil {
+			disp.Bind(ch, s.ID, s.Name, s.Kind, mprisName(*s))
 		}
 	}
+}
+
+func channelBindingLive(ch dispatcher.Channel, ss []streams.EnrichedStream) bool {
+	return ch.StreamID != nil && streamLive(*ch.StreamID, ss)
+}
+
+func bindingCandidate(ch int, cfg *config.Config, bind config.BindConfig, ss []streams.EnrichedStream) *streams.EnrichedStream {
+	matchStr := cfg.MatchStringFor(ch)
+	for i := range ss {
+		if streamMatchesBind(ss[i], bind, matchStr) {
+			return &ss[i]
+		}
+	}
+	return nil
+}
+
+func mprisName(s streams.EnrichedStream) string {
+	if s.Source == streams.SourceMPRIS {
+		return s.Name
+	}
+	return ""
 }
 
 func streamMatchesBind(s streams.EnrichedStream, bind config.BindConfig, resolvedMatch string) bool {

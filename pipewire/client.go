@@ -46,12 +46,8 @@ func (c *Client) ListStreams(ctx context.Context) ([]Stream, error) {
 
 // SetVolume sets the volume for stream id. vol is clamped to [0.0, 1.0].
 func (c *Client) SetVolume(ctx context.Context, id uint32, vol float64) error {
-	if vol < 0 {
-		vol = 0
-	} else if vol > 1 {
-		vol = 1
-	}
-	volStr := strconv.FormatFloat(vol, 'f', 4, 64)
+	vol = clamp01(vol)
+	volStr := volumeArg(vol)
 	out, err := c.exec(ctx, "wpctl", "set-volume", idStr(id), volStr)
 	if err != nil {
 		return fmt.Errorf("wpctl set-volume %d %.4f: %w\n%s", id, vol, err, out)
@@ -139,12 +135,8 @@ func (c *Client) MoveSinkInput(ctx context.Context, si uint32, sinkName string) 
 // SetSinkInputVolume sets the volume of a specific sink-input (0.0–1.0).
 // This is per-stream, per-sink — does not affect the global sink volume.
 func (c *Client) SetSinkInputVolume(ctx context.Context, si uint32, vol float64) error {
-	if vol < 0 {
-		vol = 0
-	} else if vol > 1 {
-		vol = 1
-	}
-	pct := fmt.Sprintf("%.0f%%", vol*100)
+	vol = clamp01(vol)
+	pct := percentArg(vol)
 	out, err := c.exec(ctx, "pactl", "set-sink-input-volume", idStr(si), pct)
 	if err != nil {
 		return fmt.Errorf("pactl set-sink-input-volume %d %s: %w\n%s", si, pct, err, out)
@@ -156,12 +148,8 @@ func (c *Client) SetSinkInputVolume(ctx context.Context, si uint32, vol float64)
 // Unlike SetSinkInputVolume, this targets the sink node itself and does not
 // interact with per-stream sink-input volumes or flat-volume normalization.
 func (c *Client) SetSinkVolume(ctx context.Context, sinkName string, vol float64) error {
-	if vol < 0 {
-		vol = 0
-	} else if vol > 1 {
-		vol = 1
-	}
-	pct := fmt.Sprintf("%.0f%%", vol*100)
+	vol = clamp01(vol)
+	pct := percentArg(vol)
 	out, err := c.exec(ctx, "pactl", "set-sink-volume", sinkName, pct)
 	if err != nil {
 		return fmt.Errorf("pactl set-sink-volume %s %s: %w\n%s", sinkName, pct, err, out)
@@ -208,4 +196,22 @@ func (c *Client) findNodeIDByName(ctx context.Context, nodeName string) (uint32,
 		}
 	}
 	return 0, fmt.Errorf("node %q not found in pw-dump", nodeName)
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func volumeArg(vol float64) string {
+	return strconv.FormatFloat(vol, 'f', 4, 64)
+}
+
+func percentArg(vol float64) string {
+	return fmt.Sprintf("%.0f%%", vol*100)
 }

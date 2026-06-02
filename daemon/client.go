@@ -49,8 +49,7 @@ func Connect() (*Client, InitialState, error) {
 	var state InitialState
 
 	if scanner.Scan() {
-		var env envelope
-		if err := json.Unmarshal(scanner.Bytes(), &env); err == nil && env.Kind == kindInitial {
+		if env, err := decodeEnvelope(scanner.Bytes()); err == nil && env.Kind == kindInitial {
 			var p initialPayload
 			if err := json.Unmarshal(env.Data, &p); err == nil {
 				state.Snapshot = snapFromWire(p.Snapshot)
@@ -111,16 +110,10 @@ func (c *Client) Unbind(ch int) {
 }
 
 func (c *Client) send(kind msgKind, v any) {
-	data, err := json.Marshal(v)
+	frame, err := encodeFrame(kind, v)
 	if err != nil {
 		return
 	}
-	env := envelope{Kind: kind, Data: json.RawMessage(data)}
-	frame, err := json.Marshal(env)
-	if err != nil {
-		return
-	}
-	frame = append(frame, '\n')
 	c.writeMu.Lock()
 	c.conn.Write(frame) //nolint:errcheck
 	c.writeMu.Unlock()
@@ -135,8 +128,8 @@ func (c *Client) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		var env envelope
-		if err := json.Unmarshal(c.scanner.Bytes(), &env); err != nil {
+		env, err := decodeEnvelope(c.scanner.Bytes())
+		if err != nil {
 			log.Printf("client: decode: %v", err)
 			continue
 		}

@@ -162,13 +162,21 @@ func (c *Client) SetCrossfaderGains(ctx context.Context, r *CrossfaderRouting, v
 // TeardownCrossfader moves the stream back to the default sink and unloads all modules.
 func (c *Client) TeardownCrossfader(ctx context.Context, r *CrossfaderRouting) {
 	_ = c.MoveSinkInput(ctx, r.StreamSI, "@DEFAULT_SINK@")
-	_ = c.UnloadModule(ctx, r.Loop2BModule)
-	_ = c.UnloadModule(ctx, r.Loop2AModule)
-	_ = c.UnloadModule(ctx, r.LoopBModule)
-	_ = c.UnloadModule(ctx, r.LoopAModule)
-	_ = c.UnloadModule(ctx, r.GainBModule)
-	_ = c.UnloadModule(ctx, r.GainAModule)
-	_ = c.UnloadModule(ctx, r.NullSinkModule)
+	for _, moduleID := range r.moduleIDsInUnloadOrder() {
+		_ = c.UnloadModule(ctx, moduleID)
+	}
+}
+
+func (r *CrossfaderRouting) moduleIDsInUnloadOrder() []uint32 {
+	return []uint32{
+		r.Loop2BModule,
+		r.Loop2AModule,
+		r.LoopBModule,
+		r.LoopAModule,
+		r.GainBModule,
+		r.GainAModule,
+		r.NullSinkModule,
+	}
 }
 
 // findSinkInput returns the pactl sink-input index for the given PW stream, matching

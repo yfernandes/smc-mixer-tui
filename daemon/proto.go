@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -25,7 +26,7 @@ type msgKind string
 const (
 	kindInitial  msgKind = "initial"  // daemon → client: full state on connect
 	kindSnapshot msgKind = "snapshot" // daemon → client: channel state update
-	kindStreams   msgKind = "streams"  // daemon → client: enriched stream list update
+	kindStreams  msgKind = "streams"  // daemon → client: enriched stream list update
 	kindDevice   msgKind = "device"   // daemon → client: MIDI device status
 	kindGlobal   msgKind = "global"   // daemon → client: transport button press
 	kindBind     msgKind = "bind"     // client → daemon: bind stream to channel
@@ -38,27 +39,48 @@ type envelope struct {
 	Data json.RawMessage `json:"data"`
 }
 
+func encodeFrame(kind msgKind, v any) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	env := envelope{Kind: kind, Data: json.RawMessage(data)}
+	frame, err := json.Marshal(env)
+	if err != nil {
+		return nil, err
+	}
+	return append(frame, '\n'), nil
+}
+
+func decodeEnvelope(frame []byte) (envelope, error) {
+	var env envelope
+	if err := json.Unmarshal(frame, &env); err != nil {
+		return envelope{}, fmt.Errorf("decode envelope: %w", err)
+	}
+	return env, nil
+}
+
 // ── Push payloads (daemon → client) ──────────────────────────────────────────
 
 // channelWire is the JSON-safe form of dispatcher.Channel.
 // The unexported crossfader field is omitted; all exported fields are preserved.
 type channelWire struct {
-	StreamID       *uint32             `json:"stream_id,omitempty"`
-	Name           string              `json:"name"`
+	StreamID       *uint32        `json:"stream_id,omitempty"`
+	Name           string         `json:"name"`
 	Kind           audio.NodeKind `json:"kind"`
-	MPRISName      string              `json:"mpris_name"`
-	ActualVolume   float64             `json:"actual_volume"`
-	FaderPos       float64             `json:"fader_pos"`
-	LastSetVol     float64             `json:"last_set_vol"`
-	Synced         bool                `json:"synced"`
-	Knob           int                 `json:"knob"`
-	Mute           bool                `json:"mute"`
-	SoloMuted      bool                `json:"solo_muted"`
-	Solo           bool                `json:"solo"`
-	Rec            bool                `json:"rec"`
-	Stop           bool                `json:"stop"`
-	CrossSinkAName string              `json:"cross_sink_a_name"`
-	CrossSinkBName string              `json:"cross_sink_b_name"`
+	MPRISName      string         `json:"mpris_name"`
+	ActualVolume   float64        `json:"actual_volume"`
+	FaderPos       float64        `json:"fader_pos"`
+	LastSetVol     float64        `json:"last_set_vol"`
+	Synced         bool           `json:"synced"`
+	Knob           int            `json:"knob"`
+	Mute           bool           `json:"mute"`
+	SoloMuted      bool           `json:"solo_muted"`
+	Solo           bool           `json:"solo"`
+	Rec            bool           `json:"rec"`
+	Stop           bool           `json:"stop"`
+	CrossSinkAName string         `json:"cross_sink_a_name"`
+	CrossSinkBName string         `json:"cross_sink_b_name"`
 }
 
 func toWire(c dispatcher.Channel) channelWire {
@@ -130,11 +152,11 @@ type initialPayload struct {
 // ── Command payloads (client → daemon) ───────────────────────────────────────
 
 type bindPayload struct {
-	Ch        int                 `json:"ch"`
-	ID        uint32              `json:"id"`
-	Name      string              `json:"name"`
+	Ch        int            `json:"ch"`
+	ID        uint32         `json:"id"`
+	Name      string         `json:"name"`
 	Kind      audio.NodeKind `json:"kind"`
-	MPRISName string              `json:"mpris_name"`
+	MPRISName string         `json:"mpris_name"`
 }
 
 type unbindPayload struct {

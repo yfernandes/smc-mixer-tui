@@ -97,17 +97,11 @@ func (s *Server) BroadcastGlobal(msg midi.GlobalMsg) {
 }
 
 func (s *Server) broadcast(kind msgKind, v any) {
-	data, err := json.Marshal(v)
+	frame, err := encodeFrame(kind, v)
 	if err != nil {
 		log.Printf("daemon: marshal %s: %v", kind, err)
 		return
 	}
-	env := envelope{Kind: kind, Data: json.RawMessage(data)}
-	frame, err := json.Marshal(env)
-	if err != nil {
-		return
-	}
-	frame = append(frame, '\n')
 
 	s.mu.RLock()
 	clients := make([]*serverConn, 0, len(s.clients))
@@ -150,8 +144,8 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 		if ctx.Err() != nil {
 			return
 		}
-		var env envelope
-		if err := json.Unmarshal(scanner.Bytes(), &env); err != nil {
+		env, err := decodeEnvelope(scanner.Bytes())
+		if err != nil {
 			log.Printf("daemon: client decode: %v", err)
 			continue
 		}
@@ -195,14 +189,9 @@ func (sc *serverConn) write(frame []byte) {
 }
 
 func (sc *serverConn) writeMsg(kind msgKind, v any) {
-	data, err := json.Marshal(v)
+	frame, err := encodeFrame(kind, v)
 	if err != nil {
 		return
 	}
-	env := envelope{Kind: kind, Data: json.RawMessage(data)}
-	frame, err := json.Marshal(env)
-	if err != nil {
-		return
-	}
-	sc.write(append(frame, '\n'))
+	sc.write(frame)
 }
