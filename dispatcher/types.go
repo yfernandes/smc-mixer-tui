@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/midi"
@@ -78,5 +79,6 @@ type Dispatcher struct {
 	mpris      MPRISCaller // nil when MPRIS unavailable
 	channels   [8]Channel
 	globalLEDs [5]bool // toggle state for transport buttons, indexed by globalLEDActions
+	lastStopAt [8]time.Time
 	mu         sync.RWMutex
 }

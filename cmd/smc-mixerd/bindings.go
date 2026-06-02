@@ -14,6 +14,7 @@ func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams
 	for _, action := range planBindings(cfg, disp.Snapshot(), ss) {
 		disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
 	}
+	refreshBindingMetadata(disp, ss)
 }
 
 type bindingAction struct {
@@ -116,4 +117,22 @@ func streamLive(id uint32, ss []streams.EnrichedStream) bool {
 		}
 	}
 	return false
+}
+
+func refreshBindingMetadata(disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
+	snap := disp.Snapshot()
+	byID := make(map[uint32]streams.EnrichedStream, len(ss))
+	for _, s := range ss {
+		byID[s.ID] = s
+	}
+	for ch, c := range snap {
+		if c.StreamID == nil {
+			continue
+		}
+		s, ok := byID[*c.StreamID]
+		if !ok {
+			continue
+		}
+		disp.UpdateBindingMetadata(ch, s.ID, s.Name, mprisName(s))
+	}
 }

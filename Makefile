@@ -1,6 +1,6 @@
 BIN := $(HOME)/.local/bin
 
-.PHONY: build test install clean
+.PHONY: build test test-pipewire-integration install clean
 
 build:
 	go build ./cmd/smc-mixerd
@@ -8,6 +8,9 @@ build:
 
 test:
 	go test ./...
+
+test-pipewire-integration:
+	go test -tags integration_pipewire ./pipewire -run TestCrossfaderBuildsSendBusGraphAndLeavesMastersIndependent -count=1 -v
 
 install: build
 	install -Dm755 smc-mixerd $(BIN)/smc-mixerd

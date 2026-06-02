@@ -40,6 +40,14 @@ func (m *crossfaderManager) Sync(ctx context.Context, snap [8]dispatcher.Channel
 	}
 }
 
+func (m *crossfaderManager) Close(ctx context.Context) {
+	for ch := range 8 {
+		if m.active[ch] != nil {
+			m.teardownChannel(ctx, ch)
+		}
+	}
+}
+
 func (m *crossfaderManager) syncChannel(ctx context.Context, ch int, channel dispatcher.Channel, ss []streams.EnrichedStream) {
 	knob, ok := m.cfg.KnobFor(ch)
 	isCrossfade := ok && knob.IsCrossfade()

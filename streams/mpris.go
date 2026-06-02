@@ -35,13 +35,21 @@ func IsPlaying(ctx context.Context, playerName string) bool {
 	}
 	defer conn.Close()
 	obj := conn.Object(mprisPrefix+playerName, "/org/mpris/MediaPlayer2")
-	var variant dbus.Variant
-	if obj.CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0,
-		"org.mpris.MediaPlayer2.Player", "PlaybackStatus").Store(&variant) != nil {
+	status, err := playbackStatus(ctx, obj)
+	if err != nil {
 		return false
 	}
-	status, _ := variant.Value().(string)
 	return status == "Playing"
+}
+
+func playbackStatus(ctx context.Context, obj dbus.BusObject) (string, error) {
+	var variant dbus.Variant
+	if err := obj.CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0,
+		"org.mpris.MediaPlayer2.Player", "PlaybackStatus").Store(&variant); err != nil {
+		return "", err
+	}
+	status, _ := variant.Value().(string)
+	return status, nil
 }
 
 const mprisPrefix = "org.mpris.MediaPlayer2."

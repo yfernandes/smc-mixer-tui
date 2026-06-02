@@ -3,10 +3,13 @@ package dispatcher
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
+
+const stopButtonDebounce = 250 * time.Millisecond
 
 func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 	if !m.Pressed {
@@ -14,12 +17,28 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 	}
 
 	d.mu.Lock()
+	if d.shouldIgnoreButtonLocked(m) {
+		d.mu.Unlock()
+		return
+	}
 	effects := d.applyButtonState(m)
 	leds := d.leds
 	mpris := d.mpris
 	d.mu.Unlock()
 
 	d.applyButtonEffects(ctx, m, effects, leds, mpris)
+}
+
+func (d *Dispatcher) shouldIgnoreButtonLocked(m midi.ButtonMsg) bool {
+	if m.Kind != midi.ButtonStop {
+		return false
+	}
+	now := time.Now()
+	if !d.lastStopAt[m.Channel].IsZero() && now.Sub(d.lastStopAt[m.Channel]) < stopButtonDebounce {
+		return true
+	}
+	d.lastStopAt[m.Channel] = now
+	return false
 }
 
 type muteUpdate struct {

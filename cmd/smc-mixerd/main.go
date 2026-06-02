@@ -56,6 +56,7 @@ func main() {
 	applyBindings(cfg, disp, initial)
 
 	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
+	defer manageCrossfaders.Close(context.Background())
 	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
 	srv := daemon.NewServer(disp)

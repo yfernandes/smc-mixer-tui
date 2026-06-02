@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
@@ -57,6 +58,26 @@ func TestPlanBindingsLeavesLiveBindingsAlone(t *testing.T) {
 
 	if len(actions) != 0 {
 		t.Fatalf("live binding should not be rebound, got %+v", actions)
+	}
+}
+
+func TestApplyBindingsRefreshesMPRISForLiveBinding(t *testing.T) {
+	cfg := testConfig(config.BindPlayback, "spotify")
+	disp := dispatcher.New(newNoopPW())
+
+	applyBindings(cfg, disp, []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+	})
+	if got := disp.Snapshot()[0].MPRISName; got != "" {
+		t.Fatalf("initial MPRISName = %q, want empty", got)
+	}
+
+	applyBindings(cfg, disp, []streams.EnrichedStream{
+		mprisStream(20, "spotify", audio.KindSource),
+	})
+
+	if got := disp.Snapshot()[0].MPRISName; got != "spotify" {
+		t.Fatalf("refreshed MPRISName = %q, want spotify", got)
 	}
 }
 
@@ -175,3 +196,11 @@ func mprisStream(id uint32, name string, kind audio.NodeKind) streams.EnrichedSt
 	s.Source = streams.SourceMPRIS
 	return s
 }
+
+type noopPW struct{}
+
+func newNoopPW() noopPW { return noopPW{} }
+
+func (noopPW) SetVolume(context.Context, uint32, float64) error { return nil }
+
+func (noopPW) SetMute(context.Context, uint32, bool) error { return nil }

@@ -34,6 +34,21 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 	}
 }
 
+// UpdateBindingMetadata refreshes non-control metadata for an existing binding.
+// It is intentionally narrower than Bind: it must not reset fader pickup state,
+// volume tracking, or crossfader routing.
+func (d *Dispatcher) UpdateBindingMetadata(ch int, id uint32, name, mprisName string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.channels[ch].boundTo(id) {
+		return
+	}
+	if name != "" {
+		d.channels[ch].Name = name
+	}
+	d.channels[ch].MPRISName = mprisName
+}
+
 // Unbind removes the stream binding from a channel strip.
 func (d *Dispatcher) Unbind(ch int) {
 	d.mu.Lock()

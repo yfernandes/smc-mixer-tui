@@ -400,6 +400,41 @@ func TestStopCallsMPRIS(t *testing.T) {
 	}
 }
 
+func TestStopDebouncesDuplicatePresses(t *testing.T) {
+	d := New(newFakePW())
+	m := &fakeMPRIS{}
+	d.SetMPRISCaller(m)
+	d.Bind(0, 10, "Spotify", audio.KindSource, "Spotify")
+
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
+
+	if len(m.calls) != 1 {
+		t.Fatalf("duplicate stop press should call PlayPause once, got %v", m.calls)
+	}
+}
+
+func TestUpdateBindingMetadataPreservesFaderStateAndEnablesMPRIS(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 42, "Zen", audio.KindSource, "")
+	d.UpdateActualVolume(0, 64.0/127.0)
+	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	before := d.Snapshot()[0]
+	if !before.Synced {
+		t.Fatal("expected channel to be synced before metadata refresh")
+	}
+
+	d.UpdateBindingMetadata(0, 42, "firefox.instance_1_46", "firefox.instance_1_46")
+
+	after := d.Snapshot()[0]
+	if after.MPRISName != "firefox.instance_1_46" {
+		t.Fatalf("MPRISName = %q, want firefox.instance_1_46", after.MPRISName)
+	}
+	if !after.Synced || after.LastSetVol != before.LastSetVol || after.ActualVolume != before.ActualVolume {
+		t.Fatalf("metadata refresh reset fader state: before=%+v after=%+v", before, after)
+	}
+}
+
 func TestStopNoMPRISNoCall(t *testing.T) {
 	d := New(newFakePW())
 	d.Bind(0, 10, "App", audio.KindSource, "") // no MPRIS name
