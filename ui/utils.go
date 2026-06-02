@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
@@ -24,15 +25,14 @@ func pickupLabel(c dispatcher.Channel) string {
 	switch {
 	case !blink:
 		arrow = " "
-	case c.FaderPos > c.ActualVolume+2.0/127.0:
+	case c.FaderPos > c.ActualVolume+dispatcher.PickupThreshold:
 		arrow = "↓" // fader is above actual — move it down
-	case c.FaderPos < c.ActualVolume-2.0/127.0:
+	case c.FaderPos < c.ActualVolume-dispatcher.PickupThreshold:
 		arrow = "↑" // fader is below actual — move it up
 	default:
 		arrow = "~" // nearly there
 	}
-	style := lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
-	return style.Render(arrow) + pct[:3]
+	return pickupArrowStyle.Render(arrow) + pct[:3]
 }
 
 // renderBtn returns a 3-char button string "[X]", styled when active.
@@ -67,32 +67,45 @@ func faderRows(vol float64, height, width int) []string {
 	return rows
 }
 
-// kindTag returns a colored 5-char type tag and its style for the bind panel.
-func kindTag(k streams.NodeKind) (string, lipgloss.Style) {
+// kindTag returns a 5-char type tag and its pre-built style for the bind panel.
+func kindTag(k audio.NodeKind) (string, lipgloss.Style) {
 	switch k {
-	case streams.KindMic:
-		return "[mic]", lipgloss.NewStyle().Foreground(colorMic).Bold(true)
-	case streams.KindSink:
-		return "[out]", lipgloss.NewStyle().Foreground(colorSink).Bold(true)
+	case audio.KindMic:
+		return "[mic]", kindTagMicStyle
+	case audio.KindSink:
+		return "[out]", kindTagSinkStyle
 	default:
-		return "[src]", lipgloss.NewStyle().Foreground(colorSrc).Bold(true)
+		return "[src]", kindTagSrcStyle
 	}
 }
 
-// kindHeader returns a full-width dim section label for the bind panel.
-func kindHeader(k streams.NodeKind, _ int) string {
-	var label string
-	var color lipgloss.Color
+// kindHeader returns a dim section label for the bind panel.
+func kindHeader(k audio.NodeKind, _ int) string {
 	switch k {
-	case streams.KindMic:
-		label, color = " Microphones", colorMic
-	case streams.KindSink:
-		label, color = " Outputs", colorSink
+	case audio.KindMic:
+		return kindHdrMicStyle.Render(" Microphones")
+	case audio.KindSink:
+		return kindHdrSinkStyle.Render(" Outputs")
 	default:
-		label, color = " Sources", colorSrc
+		return kindHdrSrcStyle.Render(" Sources")
 	}
-	style := lipgloss.NewStyle().Foreground(color).Faint(true)
-	return style.Render(label)
+}
+
+// streamSubtitle picks the best secondary description for a stream.
+// Prefers per-stream media.name; MPRIS artist/track is per-process and can
+// bleed across streams from the same PID (e.g. browser tabs).
+func streamSubtitle(es streams.EnrichedStream) string {
+	if es.MediaName != "" && es.MediaName != es.Name &&
+		es.MediaName != "playback" && es.MediaName != "Playback" {
+		return es.MediaName
+	}
+	if es.Source == streams.SourceMPRIS {
+		if es.Artist != "" && es.Track != "" {
+			return es.Artist + " – " + es.Track
+		}
+		return es.Track
+	}
+	return ""
 }
 
 // crossfadeBar renders a knob position indicator suited for a crossfader.

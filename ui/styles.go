@@ -65,4 +65,17 @@ var (
 	bindCursorStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	bindItemStyle   = lipgloss.NewStyle()
 	bindDimStyle    = lipgloss.NewStyle().Foreground(colorDim)
+
+	// Kind tag styles used in the bind panel item rows.
+	kindTagMicStyle  = lipgloss.NewStyle().Foreground(colorMic).Bold(true)
+	kindTagSrcStyle  = lipgloss.NewStyle().Foreground(colorSrc).Bold(true)
+	kindTagSinkStyle = lipgloss.NewStyle().Foreground(colorSink).Bold(true)
+
+	// Kind header styles used as section dividers in the bind panel.
+	kindHdrMicStyle  = lipgloss.NewStyle().Foreground(colorMic).Faint(true)
+	kindHdrSrcStyle  = lipgloss.NewStyle().Foreground(colorSrc).Faint(true)
+	kindHdrSinkStyle = lipgloss.NewStyle().Foreground(colorSink).Faint(true)
+
+	// pickupArrowStyle highlights the sync-direction arrow in the volume label.
+	pickupArrowStyle = lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
 )

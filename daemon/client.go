@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -100,7 +101,7 @@ func (c *Client) Snapshot() [8]dispatcher.Channel {
 }
 
 // Bind forwards a bind command to the daemon. Implements ui.Dispatcher.
-func (c *Client) Bind(ch int, id uint32, name string, kind dispatcher.NodeKind, mprisName string) {
+func (c *Client) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
 	c.send(kindBind, bindPayload{Ch: ch, ID: id, Name: name, Kind: kind, MPRISName: mprisName})
 }
 

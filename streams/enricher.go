@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/pipewire"
 )
 
@@ -17,28 +18,19 @@ const (
 	SourceMPRIS                  // player name from DBus MPRIS
 )
 
-// NodeKind classifies the functional role of an audio node.
-type NodeKind uint8
-
-const (
-	KindSource NodeKind = iota // app playing audio
-	KindMic                    // microphone / capture device
-	KindSink                   // output device / speakers
-)
-
 // EnrichedStream is a live PipeWire audio node with the best available identity.
 type EnrichedStream struct {
-	ID        uint32   // PipeWire node ID
-	PID       uint32   // OS process ID; 0 if unavailable
-	Name      string   // best display name
-	NodeName  string   // PipeWire node.name (stable, used for pactl sink addressing)
-	BindKey   string   // stable key for config matching (MPRIS name or app.name)
+	ID        uint32         // PipeWire node ID
+	PID       uint32         // OS process ID; 0 if unavailable
+	Name      string         // best display name
+	NodeName  string         // PipeWire node.name (stable, used for pactl sink addressing)
+	BindKey   string         // stable key for config matching (MPRIS name or app.name)
 	Source    Source
-	Kind      NodeKind // functional role: source app, microphone, or output sink
-	Track     string   // MPRIS: current track title
-	Artist    string   // MPRIS: first listed artist
-	WinTitle  string   // Hyprland: window title of the owning process
-	MediaName string   // PipeWire: media.name (e.g. YouTube video title)
+	Kind      audio.NodeKind // functional role: source app, microphone, or output sink
+	Track     string         // MPRIS: current track title
+	Artist    string         // MPRIS: first listed artist
+	WinTitle  string         // Hyprland: window title of the owning process
+	MediaName string         // PipeWire: media.name (e.g. YouTube video title)
 }
 
 // UpdateMsg is a tea-compatible message carrying a refreshed stream list.
@@ -123,7 +115,7 @@ func (e *Enricher) Enrich(ctx context.Context) ([]EnrichedStream, error) {
 			NodeName:  s.NodeName,
 			BindKey:   s.Name,
 			Source:    SourcePipeWire,
-			Kind:      NodeKind(s.Kind), // pipewire.KindSource/Mic/Sink share the same iota values
+			Kind:      s.Kind,
 			MediaName: s.MediaName,
 		}
 		// Hyprland class overrides PipeWire name; always capture window title

@@ -48,95 +48,86 @@ func (c *Client) SetupCrossfader(ctx context.Context, tag string, streamNodeID u
 	gainAName := "smc_" + tag + "_gain_a"
 	gainBName := "smc_" + tag + "_gain_b"
 
-	nullModID, err := c.LoadModule(ctx, "module-null-sink",
+	// loaded collects module IDs in load order so unloadAll can reverse them.
+	var loaded []uint32
+	load := func(name, args string) (uint32, error) {
+		id, err := c.LoadModule(ctx, name, args)
+		if err != nil {
+			return 0, err
+		}
+		loaded = append(loaded, id)
+		return id, nil
+	}
+	unloadAll := func() {
+		for i := len(loaded) - 1; i >= 0; i-- {
+			_ = c.UnloadModule(ctx, loaded[i])
+		}
+	}
+
+	nullModID, err := load("module-null-sink",
 		"sink_name="+nullName+" sink_properties=device.description="+nullName)
 	if err != nil {
 		return nil, fmt.Errorf("null sink: %w", err)
 	}
 
-	gainAModID, err := c.LoadModule(ctx, "module-null-sink",
+	gainAModID, err := load("module-null-sink",
 		"sink_name="+gainAName+" sink_properties=device.description="+gainAName)
 	if err != nil {
-		_ = c.UnloadModule(ctx, nullModID)
+		unloadAll()
 		return nil, fmt.Errorf("gain sink A: %w", err)
 	}
 
-	gainBModID, err := c.LoadModule(ctx, "module-null-sink",
+	gainBModID, err := load("module-null-sink",
 		"sink_name="+gainBName+" sink_properties=device.description="+gainBName)
 	if err != nil {
-		_ = c.UnloadModule(ctx, gainAModID)
-		_ = c.UnloadModule(ctx, nullModID)
+		unloadAll()
 		return nil, fmt.Errorf("gain sink B: %w", err)
 	}
 
 	// NullSink.monitor → GainA
-	loopAModID, err := c.LoadModule(ctx, "module-loopback",
+	loopAModID, err := load("module-loopback",
 		"source="+nullName+".monitor sink="+gainAName+
 			" source.dont.move=true sink.dont.move=true latency_msec=50")
 	if err != nil {
-		_ = c.UnloadModule(ctx, gainBModID)
-		_ = c.UnloadModule(ctx, gainAModID)
-		_ = c.UnloadModule(ctx, nullModID)
+		unloadAll()
 		return nil, fmt.Errorf("loopback A: %w", err)
 	}
 
 	// NullSink.monitor → GainB
-	loopBModID, err := c.LoadModule(ctx, "module-loopback",
+	loopBModID, err := load("module-loopback",
 		"source="+nullName+".monitor sink="+gainBName+
 			" source.dont.move=true sink.dont.move=true latency_msec=50")
 	if err != nil {
-		_ = c.UnloadModule(ctx, loopAModID)
-		_ = c.UnloadModule(ctx, gainBModID)
-		_ = c.UnloadModule(ctx, gainAModID)
-		_ = c.UnloadModule(ctx, nullModID)
+		unloadAll()
 		return nil, fmt.Errorf("loopback B: %w", err)
 	}
 
 	// GainA.monitor → SinkA
-	loop2AModID, err := c.LoadModule(ctx, "module-loopback",
+	loop2AModID, err := load("module-loopback",
 		"source="+gainAName+".monitor sink="+sinkANodeName+
 			" source.dont.move=true sink.dont.move=true latency_msec=50")
 	if err != nil {
-		_ = c.UnloadModule(ctx, loopBModID)
-		_ = c.UnloadModule(ctx, loopAModID)
-		_ = c.UnloadModule(ctx, gainBModID)
-		_ = c.UnloadModule(ctx, gainAModID)
-		_ = c.UnloadModule(ctx, nullModID)
+		unloadAll()
 		return nil, fmt.Errorf("loopback 2A: %w", err)
 	}
 
 	// GainB.monitor → SinkB
-	loop2BModID, err := c.LoadModule(ctx, "module-loopback",
+	loop2BModID, err := load("module-loopback",
 		"source="+gainBName+".monitor sink="+sinkBNodeName+
 			" source.dont.move=true sink.dont.move=true latency_msec=50")
 	if err != nil {
-		_ = c.UnloadModule(ctx, loop2AModID)
-		_ = c.UnloadModule(ctx, loopBModID)
-		_ = c.UnloadModule(ctx, loopAModID)
-		_ = c.UnloadModule(ctx, gainBModID)
-		_ = c.UnloadModule(ctx, gainAModID)
-		_ = c.UnloadModule(ctx, nullModID)
+		unloadAll()
 		return nil, fmt.Errorf("loopback 2B: %w", err)
-	}
-
-	cleanup := func() {
-		_ = c.UnloadModule(ctx, loop2BModID)
-		_ = c.UnloadModule(ctx, loop2AModID)
-		_ = c.UnloadModule(ctx, loopBModID)
-		_ = c.UnloadModule(ctx, loopAModID)
-		_ = c.UnloadModule(ctx, gainBModID)
-		_ = c.UnloadModule(ctx, gainAModID)
-		_ = c.UnloadModule(ctx, nullModID)
 	}
 
 	streamSI, err := c.findSinkInput(ctx, streamNodeID, streamNodeName)
 	if err != nil {
-		cleanup()
+		unloadAll()
 		return nil, fmt.Errorf("find stream SI: %w", err)
 	}
 
 	if err := c.MoveSinkInput(ctx, streamSI, nullName); err != nil {
-		cleanup()
+		unloadAll()
 		return nil, fmt.Errorf("move stream to null sink: %w", err)
 	}
 

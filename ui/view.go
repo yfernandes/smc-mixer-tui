@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
@@ -98,7 +99,7 @@ func (m Model) renderStrip(ch int) string {
 		row(fRows[4], volPct),
 	}
 
-	var kind streams.NodeKind
+	var kind audio.NodeKind
 	if es != nil {
 		kind = es.Kind
 	}
@@ -108,21 +109,10 @@ func (m Model) renderStrip(ch int) string {
 // bindSubtitle returns the most useful secondary description for a stream in
 // the bind picker. Returns "" when nothing useful is available.
 func bindSubtitle(es streams.EnrichedStream) string {
-	// media.name is per-stream (set by the audio context of each tab/source),
-	// so it correctly distinguishes multiple streams from the same process.
-	// Always prefer it over MPRIS, which is per-process and can bleed across tabs.
-	if es.MediaName != "" && es.MediaName != es.Name &&
-		es.MediaName != "playback" && es.MediaName != "Playback" {
-		return es.MediaName
+	if s := streamSubtitle(es); s != "" {
+		return s
 	}
-	// MPRIS fallback: only useful when there is no per-stream media.name.
-	if es.Source == streams.SourceMPRIS {
-		if es.Artist != "" && es.Track != "" {
-			return es.Artist + " – " + es.Track
-		}
-		return es.Track
-	}
-	// Hyprland window title as last resort
+	// Hyprland window title as last resort (bind panel only — not shown in strips).
 	if es.WinTitle != "" && es.WinTitle != es.Name {
 		return es.WinTitle
 	}
@@ -147,19 +137,7 @@ func subtitleLabel(es *streams.EnrichedStream, state channelState) string {
 	if es == nil || state != stateActive {
 		return ""
 	}
-	// Prefer per-stream media.name; MPRIS artist/track is per-process and bleeds
-	// across all streams from the same PID when a browser has multiple audio tabs.
-	if es.MediaName != "" && es.MediaName != es.Name &&
-		es.MediaName != "playback" && es.MediaName != "Playback" {
-		return es.MediaName
-	}
-	if es.Source == streams.SourceMPRIS {
-		if es.Artist != "" && es.Track != "" {
-			return es.Artist + " – " + es.Track
-		}
-		return es.Track
-	}
-	return ""
+	return streamSubtitle(*es)
 }
 
 // renderBindPanel renders the full-width stream picker shown below the strips
@@ -235,7 +213,7 @@ func (m Model) renderBar() string {
 }
 
 
-func selectStripStyle(selected bool, state channelState, kind streams.NodeKind) lipgloss.Style {
+func selectStripStyle(selected bool, state channelState, kind audio.NodeKind) lipgloss.Style {
 	switch {
 	case state == stateBinding:
 		return stripBindMode
@@ -246,18 +224,18 @@ func selectStripStyle(selected bool, state channelState, kind streams.NodeKind) 
 		return stripUnbound
 	case selected:
 		switch kind {
-		case streams.KindMic:
+		case audio.KindMic:
 			return stripMicSelected
-		case streams.KindSink:
+		case audio.KindSink:
 			return stripSinkSelected
 		default:
 			return stripSrcSelected
 		}
 	default:
 		switch kind {
-		case streams.KindMic:
+		case audio.KindMic:
 			return stripMic
-		case streams.KindSink:
+		case audio.KindSink:
 			return stripSinkBound
 		default:
 			return stripSrcBound

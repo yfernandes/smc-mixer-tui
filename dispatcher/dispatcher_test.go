@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
 
@@ -59,7 +60,7 @@ func abs64(x float64) float64 {
 func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox", KindSource, "")
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
 
 	want := 64.0 / 127.0
 	// Simulate poll: actual volume is at 64/127.
@@ -81,7 +82,7 @@ func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 func TestFaderNoCallBeforePickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox", KindSource, "")
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
 	// Actual volume at 80%; fader sent at 50% — too far, should NOT call SetVolume.
 	d.UpdateActualVolume(0, 0.80)
 	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // 64/127 ≈ 0.504
@@ -97,7 +98,7 @@ func TestFaderNoCallBeforePickup(t *testing.T) {
 func TestFaderDesyncsOnExternalChange(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox", KindSource, "")
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
 
 	// Pick up at 0.5.
 	d.UpdateActualVolume(0, 0.5)
@@ -116,7 +117,7 @@ func TestFaderDesyncsOnExternalChange(t *testing.T) {
 func TestFaderZeroAutoPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 1, "test", KindSource, "")
+	d.Bind(0, 1, "test", audio.KindSource, "")
 	// Actual at 0; fader at 0 → auto-syncs (both at floor).
 	d.UpdateActualVolume(0, 0.0)
 	send(d, midi.FaderMsg{Channel: 0, Value: 0})
@@ -128,7 +129,7 @@ func TestFaderZeroAutoPickup(t *testing.T) {
 func TestFaderMaxPickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 1, "test", KindSource, "")
+	d.Bind(0, 1, "test", audio.KindSource, "")
 	d.UpdateActualVolume(0, 1.0)
 	send(d, midi.FaderMsg{Channel: 0, Value: 127})
 	if !approxEq(pw.volumes[1], 1.0) {
@@ -196,7 +197,7 @@ func TestKnobClampLow(t *testing.T) {
 func TestMuteTogglesBoundStream(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(2, 99, "Spotify", KindSource, "")
+	d.Bind(2, 99, "Spotify", audio.KindSource, "")
 
 	send(d, midi.ButtonMsg{Channel: 2, Kind: midi.ButtonMute, Pressed: true})
 	if !pw.mutes[99] {
@@ -212,7 +213,7 @@ func TestMuteTogglesBoundStream(t *testing.T) {
 func TestMuteReleaseIgnored(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 10, "test", KindSource, "")
+	d.Bind(0, 10, "test", audio.KindSource, "")
 
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonMute, Pressed: false})
 	if _, called := pw.mutes[10]; called {
@@ -265,11 +266,11 @@ func TestStopToggle(t *testing.T) {
 func TestSoloMutesOtherSameKindChannels(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 10, "App1", KindSource, "")
-	d.Bind(1, 20, "App2", KindSource, "")
-	d.Bind(2, 30, "Mic1", KindMic, "")
+	d.Bind(0, 10, "App1", audio.KindSource, "")
+	d.Bind(1, 20, "App2", audio.KindSource, "")
+	d.Bind(2, 30, "Mic1", audio.KindMic, "")
 
-	// Solo channel 0 (KindSource).
+	// Solo channel 0 (audio.KindSource).
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
 
 	// Channel 1 (same kind) must be muted; channel 2 (different kind) must not be touched.
@@ -290,8 +291,8 @@ func TestSoloMutesOtherSameKindChannels(t *testing.T) {
 func TestSoloUnsoloRestoresMute(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 10, "App1", KindSource, "")
-	d.Bind(1, 20, "App2", KindSource, "")
+	d.Bind(0, 10, "App1", audio.KindSource, "")
+	d.Bind(1, 20, "App2", audio.KindSource, "")
 
 	// Solo then unsolo channel 0.
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonSolo, Pressed: true})
@@ -309,8 +310,8 @@ func TestSoloUnsoloRestoresMute(t *testing.T) {
 func TestSoloPreservesUserMute(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 10, "App1", KindSource, "")
-	d.Bind(1, 20, "App2", KindSource, "")
+	d.Bind(0, 10, "App1", audio.KindSource, "")
+	d.Bind(1, 20, "App2", audio.KindSource, "")
 
 	// Manually mute channel 1, then solo channel 0, then unsolo channel 0.
 	send(d, midi.ButtonMsg{Channel: 1, Kind: midi.ButtonMute, Pressed: true})
@@ -331,7 +332,7 @@ func TestStopCallsMPRIS(t *testing.T) {
 	d := New(pw)
 	m := &fakeMPRIS{}
 	d.SetMPRISCaller(m)
-	d.Bind(0, 10, "Spotify", KindSource, "Spotify")
+	d.Bind(0, 10, "Spotify", audio.KindSource, "Spotify")
 
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
 
@@ -342,7 +343,7 @@ func TestStopCallsMPRIS(t *testing.T) {
 
 func TestStopNoMPRISNoCall(t *testing.T) {
 	d := New(newFakePW())
-	d.Bind(0, 10, "App", KindSource, "") // no MPRIS name
+	d.Bind(0, 10, "App", audio.KindSource, "") // no MPRIS name
 
 	// Should not panic; no MPRIS caller set.
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
@@ -444,8 +445,8 @@ func TestCrossfaderNoGlobalSinkTouch(t *testing.T) {
 
 func TestBindEvictsDuplicateStream(t *testing.T) {
 	d := New(newFakePW())
-	d.Bind(0, 42, "Firefox", KindSource, "")
-	d.Bind(1, 42, "Firefox", KindSource, "") // same stream → channel 0 should be released
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+	d.Bind(1, 42, "Firefox", audio.KindSource, "") // same stream → channel 0 should be released
 
 	snap := d.Snapshot()
 	if snap[0].StreamID != nil {
@@ -459,7 +460,7 @@ func TestBindEvictsDuplicateStream(t *testing.T) {
 func TestUnbind(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox", KindSource, "")
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
 	d.Unbind(0)
 
 	send(d, midi.FaderMsg{Channel: 0, Value: 64})

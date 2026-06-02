@@ -2,7 +2,6 @@ package ui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
@@ -40,7 +39,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if s.Source == streams.SourceMPRIS {
 					mprisName = s.Name
 				}
-				m.disp.Bind(m.selected, s.ID, s.Name, dispatcher.NodeKind(s.Kind), mprisName)
+				m.disp.Bind(m.selected, s.ID, s.Name, s.Kind, mprisName)
 			}
 			m.bindMode = false
 		} else {

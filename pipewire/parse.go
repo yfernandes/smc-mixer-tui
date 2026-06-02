@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/yfernandes/smc-mixer-tui/audio"
 )
 
 // pwNode is the minimal shape we extract from pw-dump's JSON array.
@@ -49,14 +51,14 @@ func parseStreams(data []byte) ([]Stream, error) {
 			continue
 		}
 		class := rawStr(n.Info.Props["media.class"])
-		var kind NodeKind
+		var kind audio.NodeKind
 		switch class {
 		case "Stream/Output/Audio":
-			kind = KindSource
+			kind = audio.KindSource
 		case "Stream/Input/Audio", "Audio/Source", "Audio/Source/Virtual":
-			kind = KindMic
+			kind = audio.KindMic
 		case "Audio/Sink", "Audio/Sink/Virtual":
-			kind = KindSink
+			kind = audio.KindSink
 		default:
 			continue
 		}

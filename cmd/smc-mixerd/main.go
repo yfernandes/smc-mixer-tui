@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
@@ -218,7 +219,7 @@ func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams
 			if s.Source == streams.SourceMPRIS {
 				mprisName = s.Name
 			}
-			disp.Bind(ch, s.ID, s.Name, dispatcher.NodeKind(s.Kind), mprisName)
+			disp.Bind(ch, s.ID, s.Name, s.Kind, mprisName)
 			break
 		}
 	}
@@ -227,15 +228,15 @@ func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams
 func streamMatchesBind(s streams.EnrichedStream, bind config.BindConfig, resolvedMatch string) bool {
 	switch bind.Type {
 	case "input":
-		if s.Kind != streams.KindMic {
+		if s.Kind != audio.KindMic {
 			return false
 		}
 	case "playback":
-		if s.Kind != streams.KindSource {
+		if s.Kind != audio.KindSource {
 			return false
 		}
 	case "output":
-		if s.Kind != streams.KindSink {
+		if s.Kind != audio.KindSink {
 			return false
 		}
 	}
@@ -332,7 +333,7 @@ func resolveCrossfaderSinks(cfg *config.Config, knob config.KnobConfig, ss []str
 	descA := strings.ToLower(cfg.ResolveOutput(knob.OutputA))
 	descB := strings.ToLower(cfg.ResolveOutput(knob.OutputB))
 	for _, s := range ss {
-		if s.Kind != streams.KindSink {
+		if s.Kind != audio.KindSink {
 			continue
 		}
 		lower := strings.ToLower(s.Name)

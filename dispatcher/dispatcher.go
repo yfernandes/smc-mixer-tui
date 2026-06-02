@@ -6,21 +6,13 @@ import (
 	"math"
 	"sync"
 
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
 
-// pickupThreshold is the fader-to-actual-volume tolerance for sync detection
+// PickupThreshold is the fader-to-actual-volume tolerance for sync detection
 // and external-change detection (≈2 MIDI steps out of 127).
-const pickupThreshold = 2.0 / 127.0
-
-// NodeKind classifies an audio stream's functional role.
-type NodeKind uint8
-
-const (
-	KindSource NodeKind = iota // app playing audio
-	KindMic                    // microphone / capture device
-	KindSink                   // output device / speakers
-)
+const PickupThreshold = 2.0 / 127.0
 
 // PipeWire is the subset of pipewire.Client used by the dispatcher.
 type PipeWire interface {
@@ -49,9 +41,9 @@ type MPRISCaller interface {
 
 // Channel holds the runtime state for one mixer channel strip.
 type Channel struct {
-	StreamID     *uint32  // nil if unbound
-	Name         string   // display name; "" if unbound
-	Kind         NodeKind // functional role; set on Bind
+	StreamID     *uint32        // nil if unbound
+	Name         string         // display name; "" if unbound
+	Kind         audio.NodeKind // functional role; set on Bind
 	MPRISName    string   // MPRIS player name suffix; "" if not an MPRIS source
 	ActualVolume float64  // volume reported by PipeWire — the source of truth
 	FaderPos     float64  // physical hardware fader position, 0.0–1.0
@@ -182,7 +174,7 @@ func (d *Dispatcher) OnGlobal(m midi.GlobalMsg) {
 // unbound first — a stream may only be controlled by one channel at a time.
 // The new channel starts unsynced: the fader must reach the actual volume
 // before it takes control of PipeWire.
-func (d *Dispatcher) Bind(ch int, id uint32, name string, kind NodeKind, mprisName string) {
+func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
 	d.mu.Lock()
 	// Release any other channel already holding this stream.
 	var evicted []int
@@ -251,7 +243,7 @@ func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
 	c := &d.channels[ch]
 	c.ActualVolume = vol
 	wasSync := c.Synced
-	if c.Synced && math.Abs(vol-c.LastSetVol) > pickupThreshold {
+	if c.Synced && math.Abs(vol-c.LastSetVol) > PickupThreshold {
 		c.Synced = false
 	}
 	justDesynced := wasSync && !c.Synced
@@ -311,7 +303,7 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 	d.mu.Lock()
 	c := &d.channels[m.Channel]
 	c.FaderPos = faderPos
-	if !c.Synced && math.Abs(faderPos-c.ActualVolume) < pickupThreshold {
+	if !c.Synced && math.Abs(faderPos-c.ActualVolume) < PickupThreshold {
 		c.Synced = true
 	}
 	synced, id, leds := c.Synced, c.StreamID, d.leds
@@ -374,26 +366,19 @@ func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {
 
 	d.mu.Lock()
 	ch := &d.channels[m.Channel]
-	switch m.Kind {
-	case midi.ButtonMute:
-		ch.Mute = !ch.Mute
-	case midi.ButtonSolo:
-		ch.Solo = !ch.Solo
-	case midi.ButtonRec:
-		ch.Rec = !ch.Rec
-	case midi.ButtonStop:
-		ch.Stop = !ch.Stop
-	}
-
 	var ledState bool
 	switch m.Kind {
 	case midi.ButtonMute:
+		ch.Mute = !ch.Mute
 		ledState = ch.Mute || ch.SoloMuted
 	case midi.ButtonSolo:
+		ch.Solo = !ch.Solo
 		ledState = ch.Solo
 	case midi.ButtonRec:
+		ch.Rec = !ch.Rec
 		ledState = ch.Rec
 	case midi.ButtonStop:
+		ch.Stop = !ch.Stop
 		ledState = ch.Stop
 	}
 

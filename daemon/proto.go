@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
@@ -44,7 +45,7 @@ type envelope struct {
 type channelWire struct {
 	StreamID       *uint32             `json:"stream_id,omitempty"`
 	Name           string              `json:"name"`
-	Kind           dispatcher.NodeKind `json:"kind"`
+	Kind           audio.NodeKind `json:"kind"`
 	MPRISName      string              `json:"mpris_name"`
 	ActualVolume   float64             `json:"actual_volume"`
 	FaderPos       float64             `json:"fader_pos"`
@@ -132,7 +133,7 @@ type bindPayload struct {
 	Ch        int                 `json:"ch"`
 	ID        uint32              `json:"id"`
 	Name      string              `json:"name"`
-	Kind      dispatcher.NodeKind `json:"kind"`
+	Kind      audio.NodeKind `json:"kind"`
 	MPRISName string              `json:"mpris_name"`
 }
 

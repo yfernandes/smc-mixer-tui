@@ -6,25 +6,18 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-)
 
-// NodeKind classifies the functional role of a PipeWire audio node.
-type NodeKind uint8
-
-const (
-	KindSource NodeKind = iota // app playing audio  (Stream/Output/Audio)
-	KindMic                    // microphone / capture (Audio/Source, Stream/Input/Audio)
-	KindSink                   // output device / speakers (Audio/Sink)
+	"github.com/yfernandes/smc-mixer-tui/audio"
 )
 
 // Stream is an active PipeWire audio node (playback, capture, or hardware device).
 type Stream struct {
 	ID        uint32
-	Name      string   // application.name → node.description → node.name → "stream-<id>"
-	NodeName  string   // node.name (stable PW/pactl-addressable name, e.g. alsa_output.pci-...)
-	MediaName string   // media.name (e.g. YouTube video title, track name)
-	PID       uint32   // application.process.id; 0 if absent
-	Kind      NodeKind // functional role of the node
+	Name      string         // application.name → node.description → node.name → "stream-<id>"
+	NodeName  string         // node.name (stable PW/pactl-addressable name, e.g. alsa_output.pci-...)
+	MediaName string         // media.name (e.g. YouTube video title, track name)
+	PID       uint32         // application.process.id; 0 if absent
+	Kind      audio.NodeKind // functional role of the node
 }
 
 // Client wraps wpctl and pw-dump subprocess calls.

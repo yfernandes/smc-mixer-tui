@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/yfernandes/smc-mixer-tui/audio"
 )
 
 // — parseVolumeLine —
@@ -104,15 +106,15 @@ func TestParseStreams(t *testing.T) {
 	}
 
 	// Node with application.name wins over node.name; string-encoded PID is parsed
-	if streams[0].ID != 97 || streams[0].Name != "Firefox" || streams[0].PID != 1234 || streams[0].Kind != KindSource {
+	if streams[0].ID != 97 || streams[0].Name != "Firefox" || streams[0].PID != 1234 || streams[0].Kind != audio.KindSource {
 		t.Errorf("streams[0]: got %+v", streams[0])
 	}
 	// Node without application.name falls back to node.name; numeric PID is parsed
-	if streams[1].ID != 42 || streams[1].Name != "mpv" || streams[1].PID != 5678 || streams[1].Kind != KindSource {
+	if streams[1].ID != 42 || streams[1].Name != "mpv" || streams[1].PID != 5678 || streams[1].Kind != audio.KindSource {
 		t.Errorf("streams[1]: got %+v", streams[1])
 	}
-	// Sink node uses node.description and has KindSink
-	if streams[2].ID != 11 || streams[2].Name != "Built-in Audio Analog Stereo" || streams[2].Kind != KindSink {
+	// Sink node uses node.description and has audio.KindSink
+	if streams[2].ID != 11 || streams[2].Name != "Built-in Audio Analog Stereo" || streams[2].Kind != audio.KindSink {
 		t.Errorf("streams[2]: got %+v", streams[2])
 	}
 }

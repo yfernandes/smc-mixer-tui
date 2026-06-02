@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -22,12 +23,12 @@ type bindCall struct {
 	ch        int
 	id        uint32
 	name      string
-	kind      dispatcher.NodeKind
+	kind      audio.NodeKind
 	mprisName string
 }
 
 func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
-func (f *fakeDisp) Bind(ch int, id uint32, name string, kind dispatcher.NodeKind, mprisName string) {
+func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
 	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName})
 }
 func (f *fakeDisp) Unbind(ch int) { f.unbinds = append(f.unbinds, ch) }

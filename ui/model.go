@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -13,7 +14,7 @@ import (
 // Dispatcher is the subset of dispatcher.Dispatcher used by the TUI.
 type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
-	Bind(ch int, id uint32, name string, kind dispatcher.NodeKind, mprisName string)
+	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string)
 	Unbind(ch int)
 }
 
