@@ -1,7 +1,7 @@
 # Go binaries
 main
-smc-mixer
-smc-mixerd
+/smc-mixer
+/smc-mixerd
 
 # Build output
 dist/
@@ -10,6 +10,9 @@ out/
 # Env files
 .env
 .env.*
+
+# Logs
+*.log
 
 # OS
 .DS_Store

@@ -95,6 +95,31 @@ func kindHeader(k streams.NodeKind, _ int) string {
 	return style.Render(label)
 }
 
+// crossfadeBar renders a knob position indicator suited for a crossfader.
+// Width includes the ◄ and ► end caps; the cursor ┼ moves between them.
+func crossfadeBar(knob, width int) string {
+	inner := width - 2
+	if inner < 1 {
+		return "◄►"
+	}
+	pos := int(math.Round(float64(knob) / 127.0 * float64(inner-1)))
+	return "◄" + strings.Repeat("─", pos) + "┼" + strings.Repeat("─", inner-1-pos) + "►"
+}
+
+// crossfaderLabel formats a short A→B label for the knob row when crossfader is active.
+func crossfaderLabel(nameA, nameB string) string {
+	const maxEach = 4
+	a := truncate(nameA, maxEach)
+	b := truncate(nameB, maxEach)
+	if a == "" {
+		a = "A"
+	}
+	if b == "" {
+		b = "B"
+	}
+	return "⇄ " + a + "↔" + b
+}
+
 // truncate clips s to max visible chars, appending "…" if clipped.
 func truncate(s string, max int) string {
 	runes := []rune(s)

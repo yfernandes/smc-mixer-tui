@@ -75,12 +75,21 @@ func (m Model) renderStrip(ch int) string {
 	fRows := faderRows(c.ActualVolume, faderH, leftW)
 	volPct := pickupLabel(c)
 
+	var knobLine, knobBar string
+	if c.CrossSinkAName != "" && c.CrossSinkBName != "" {
+		knobLine = truncate(crossfaderLabel(c.CrossSinkAName, c.CrossSinkBName), leftW+rightW)
+		knobBar = crossfadeBar(c.Knob, knobBarW+1)
+	} else {
+		knobLine = fmt.Sprintf("◎%4d", c.Knob)
+		knobBar = faderBar(float64(c.Knob)/127.0, knobBarW+1)
+	}
+
 	lines := []string{
 		fmt.Sprintf("CH%-2d", ch+1),
 		truncate(name, leftW+rightW),
 		truncate(subtitle, leftW+rightW),
-		fmt.Sprintf("◎%4d", c.Knob),
-		faderBar(float64(c.Knob)/127.0, knobBarW+1),
+		knobLine,
+		knobBar,
 		row("", ""),
 		row(fRows[0], renderBtn("M", c.Mute || c.SoloMuted, btnMuteOn)),
 		row(fRows[1], renderBtn("S", c.Solo, btnSoloOn)),

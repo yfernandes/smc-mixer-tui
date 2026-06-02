@@ -31,6 +31,7 @@ type EnrichedStream struct {
 	ID        uint32   // PipeWire node ID
 	PID       uint32   // OS process ID; 0 if unavailable
 	Name      string   // best display name
+	NodeName  string   // PipeWire node.name (stable, used for pactl sink addressing)
 	BindKey   string   // stable key for config matching (MPRIS name or app.name)
 	Source    Source
 	Kind      NodeKind // functional role: source app, microphone, or output sink
@@ -119,6 +120,7 @@ func (e *Enricher) Enrich(ctx context.Context) ([]EnrichedStream, error) {
 			ID:        s.ID,
 			PID:       s.PID,
 			Name:      s.Name,
+			NodeName:  s.NodeName,
 			BindKey:   s.Name,
 			Source:    SourcePipeWire,
 			Kind:      NodeKind(s.Kind), // pipewire.KindSource/Mic/Sink share the same iota values

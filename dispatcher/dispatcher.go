@@ -28,6 +28,12 @@ type PipeWire interface {
 	SetMute(ctx context.Context, id uint32, muted bool) error
 }
 
+// CrossfaderController applies independent per-sink gains for a crossfader channel.
+// volA and volB are 0.0–1.0 and do not touch the global sink volumes.
+type CrossfaderController interface {
+	SetGains(ctx context.Context, volA, volB float64) error
+}
+
 // LEDWriter sends LED feedback to the MIDI device.
 type LEDWriter interface {
 	SetButtonLED(ch int, kind midi.ButtonKind, on bool)
@@ -57,6 +63,13 @@ type Channel struct {
 	Solo         bool
 	Rec          bool
 	Stop         bool
+
+	// Crossfader: when set, the knob routes audio between two output sinks.
+	// Knob 0 = only SinkA, knob 127 = only SinkB, knob 64 = both at full.
+	// crossfader is unexported so Snapshot copies work without exposing internals.
+	crossfader     CrossfaderController
+	CrossSinkAName string // display name for SinkA
+	CrossSinkBName string // display name for SinkB
 }
 
 // globalLEDActions lists the transport actions that have LEDs, in index order.
@@ -92,6 +105,16 @@ func (d *Dispatcher) SetMPRISCaller(m MPRISCaller) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.mpris = m
+}
+
+// SetCrossfader configures the crossfader controller for channel ch.
+// Pass nil to disable. nameA/nameB are display-only labels for the UI.
+func (d *Dispatcher) SetCrossfader(ch int, ctrl CrossfaderController, nameA, nameB string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.channels[ch].crossfader = ctrl
+	d.channels[ch].CrossSinkAName = nameA
+	d.channels[ch].CrossSinkBName = nameB
 }
 
 // SetLEDWriter sets (or clears, if nil) the LED output device.
@@ -275,7 +298,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, msg midi.Msg) {
 	case midi.FaderMsg:
 		d.onFader(ctx, m)
 	case midi.KnobMsg:
-		d.onKnob(m)
+		d.onKnob(ctx, m)
 	case midi.ButtonMsg:
 		d.onButton(ctx, m)
 	}
@@ -312,9 +335,8 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 	}
 }
 
-func (d *Dispatcher) onKnob(m midi.KnobMsg) {
+func (d *Dispatcher) onKnob(ctx context.Context, m midi.KnobMsg) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	k := d.channels[m.Channel].Knob + m.Delta
 	if k < 0 {
 		k = 0
@@ -322,6 +344,20 @@ func (d *Dispatcher) onKnob(m midi.KnobMsg) {
 		k = 127
 	}
 	d.channels[m.Channel].Knob = k
+	ctrl := d.channels[m.Channel].crossfader
+	d.mu.Unlock()
+
+	if ctrl == nil {
+		return
+	}
+	// Plateau crossfade: center = both sinks at full; edges fade one side to zero.
+	// ratio=0 → volA=1,volB=0; ratio=0.5 → both=1; ratio=1 → volA=0,volB=1.
+	ratio := float64(k) / 127.0
+	volA := math.Min(1.0, 2.0*(1.0-ratio))
+	volB := math.Min(1.0, 2.0*ratio)
+	if err := ctrl.SetGains(ctx, volA, volB); err != nil {
+		log.Printf("knob ch%d crossfade: %v", m.Channel, err)
+	}
 }
 
 func (d *Dispatcher) onButton(ctx context.Context, m midi.ButtonMsg) {

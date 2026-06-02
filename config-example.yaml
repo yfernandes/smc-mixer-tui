@@ -1,0 +1,51 @@
+midi:
+  device: "" # auto-discovered; set to e.g. /dev/midi1 to pin a specific device
+
+# Named output devices. Use these aliases in channel bind.match and knob output-a/output-b.
+outputs:
+  speakers: "Ryzen HD Audio Controller Analog Stereo"
+  headphones: "WH-1000XM4"
+
+# Default knob behaviour per channel bind type.
+# Override per-channel with a 'knob' block on the channel itself.
+defaults:
+  input-knob:
+    type: gain
+  playback-knob:
+    type: crossfade
+    output-a: speakers
+    output-b: headphones
+  output-knob:
+    type: none
+
+channels:
+  0:
+    label: Fifine
+    bind:
+      type: input
+      match: "fifine Microphone Analog Stereo"
+  1:
+    label: Spotify
+    bind:
+      type: playback
+      match: spotify
+  2:
+    label: Firefox
+    bind:
+      type: playback
+      match-regex: "firefox.*"
+    # Explicit crossfade override (same as playback default, shown for clarity)
+    knob:
+      type: crossfade
+      output-a: speakers
+      output-b: headphones
+  6:
+    label: Headphones
+    bind:
+      type: output
+      match: headphones
+  7:
+    label: Speakers
+    bind:
+      type: output
+      match: speakers

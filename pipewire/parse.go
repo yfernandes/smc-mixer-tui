@@ -87,12 +87,78 @@ func parseStreams(data []byte) ([]Stream, error) {
 		streams = append(streams, Stream{
 			ID:        n.ID,
 			Name:      name,
+			NodeName:  rawStr(n.Info.Props["node.name"]),
 			MediaName: rawStr(n.Info.Props["media.name"]),
 			PID:       pid,
 			Kind:      kind,
 		})
 	}
 	return streams, nil
+}
+
+// parseSinkInputs parses the output of "pactl list sink-inputs".
+// Each block starting with "Sink Input #N" becomes one SinkInput entry.
+func parseSinkInputs(data []byte) []SinkInput {
+	var out []SinkInput
+	var cur SinkInput
+	inProps := false
+	initialized := false
+
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "Sink Input #") {
+			if initialized {
+				out = append(out, cur)
+			}
+			cur = SinkInput{}
+			initialized = true
+			inProps = false
+			n, err := strconv.ParseUint(strings.TrimPrefix(trimmed, "Sink Input #"), 10, 32)
+			if err == nil {
+				cur.Index = uint32(n)
+			}
+			continue
+		}
+		if !initialized {
+			continue
+		}
+
+		if trimmed == "Properties:" {
+			inProps = true
+			continue
+		}
+		if inProps {
+			// Properties are indented two levels; a top-level key resets context.
+			if !strings.HasPrefix(line, "\t\t") && !strings.HasPrefix(line, "    ") {
+				inProps = false
+			} else {
+				// node.id = "129"  (may be absent for PipeWire-native streams)
+				if strings.HasPrefix(trimmed, "node.id = ") {
+					val := strings.Trim(strings.TrimPrefix(trimmed, "node.id = "), `"`)
+					if n, err := strconv.ParseUint(val, 10, 32); err == nil {
+						cur.NodeID = uint32(n)
+					}
+				}
+				// node.name = "firefox.instance_1_46"
+				if strings.HasPrefix(trimmed, "node.name = ") {
+					cur.NodeName = strings.Trim(strings.TrimPrefix(trimmed, "node.name = "), `"`)
+				}
+				continue
+			}
+		}
+
+		if strings.HasPrefix(trimmed, "Owner Module:") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "Owner Module:"))
+			if n, err := strconv.ParseUint(val, 10, 32); err == nil {
+				cur.OwnerModule = uint32(n)
+			}
+		}
+	}
+	if initialized {
+		out = append(out, cur)
+	}
+	return out
 }
 
 // parseVolumeLine handles "Volume: 0.50" and "Volume: 0.50 [MUTED]".
