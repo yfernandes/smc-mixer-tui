@@ -44,106 +44,136 @@ type CrossfaderRouting struct {
 //
 // tag must be unique per channel (e.g. "ch0") and stable across calls.
 func (c *Client) SetupCrossfader(ctx context.Context, tag string, streamNodeID uint32, streamNodeName, sinkANodeName, sinkBNodeName string) (*CrossfaderRouting, error) {
-	nullName := "smc_" + tag + "_void"
-	gainAName := "smc_" + tag + "_gain_a"
-	gainBName := "smc_" + tag + "_gain_b"
-
-	// loaded collects module IDs in load order so unloadAll can reverse them.
-	var loaded []uint32
-	load := func(name, args string) (uint32, error) {
-		id, err := c.LoadModule(ctx, name, args)
-		if err != nil {
-			return 0, err
-		}
-		loaded = append(loaded, id)
-		return id, nil
-	}
-	unloadAll := func() {
-		for i := len(loaded) - 1; i >= 0; i-- {
-			_ = c.UnloadModule(ctx, loaded[i])
-		}
-	}
-
-	nullModID, err := load("module-null-sink",
-		"sink_name="+nullName+" sink_properties=device.description="+nullName)
-	if err != nil {
-		return nil, fmt.Errorf("null sink: %w", err)
-	}
-
-	gainAModID, err := load("module-null-sink",
-		"sink_name="+gainAName+" sink_properties=device.description="+gainAName)
-	if err != nil {
-		unloadAll()
-		return nil, fmt.Errorf("gain sink A: %w", err)
-	}
-
-	gainBModID, err := load("module-null-sink",
-		"sink_name="+gainBName+" sink_properties=device.description="+gainBName)
-	if err != nil {
-		unloadAll()
-		return nil, fmt.Errorf("gain sink B: %w", err)
-	}
-
-	// NullSink.monitor → GainA
-	loopAModID, err := load("module-loopback",
-		"source="+nullName+".monitor sink="+gainAName+
-			" source.dont.move=true sink.dont.move=true latency_msec=50")
-	if err != nil {
-		unloadAll()
-		return nil, fmt.Errorf("loopback A: %w", err)
-	}
-
-	// NullSink.monitor → GainB
-	loopBModID, err := load("module-loopback",
-		"source="+nullName+".monitor sink="+gainBName+
-			" source.dont.move=true sink.dont.move=true latency_msec=50")
-	if err != nil {
-		unloadAll()
-		return nil, fmt.Errorf("loopback B: %w", err)
-	}
-
-	// GainA.monitor → SinkA
-	loop2AModID, err := load("module-loopback",
-		"source="+gainAName+".monitor sink="+sinkANodeName+
-			" source.dont.move=true sink.dont.move=true latency_msec=50")
-	if err != nil {
-		unloadAll()
-		return nil, fmt.Errorf("loopback 2A: %w", err)
-	}
-
-	// GainB.monitor → SinkB
-	loop2BModID, err := load("module-loopback",
-		"source="+gainBName+".monitor sink="+sinkBNodeName+
-			" source.dont.move=true sink.dont.move=true latency_msec=50")
-	if err != nil {
-		unloadAll()
-		return nil, fmt.Errorf("loopback 2B: %w", err)
+	plan := newCrossfaderSetup(tag, sinkANodeName, sinkBNodeName)
+	if err := plan.loadModules(ctx, c); err != nil {
+		plan.unloadLoaded(ctx, c)
+		return nil, err
 	}
 
 	streamSI, err := c.findSinkInput(ctx, streamNodeID, streamNodeName)
 	if err != nil {
-		unloadAll()
+		plan.unloadLoaded(ctx, c)
 		return nil, fmt.Errorf("find stream SI: %w", err)
 	}
 
-	if err := c.MoveSinkInput(ctx, streamSI, nullName); err != nil {
-		unloadAll()
+	if err := c.MoveSinkInput(ctx, streamSI, plan.names.null); err != nil {
+		plan.unloadLoaded(ctx, c)
 		return nil, fmt.Errorf("move stream to null sink: %w", err)
 	}
 
-	return &CrossfaderRouting{
-		NullSinkModule: nullModID,
-		GainAModule:    gainAModID,
-		GainBModule:    gainBModID,
-		LoopAModule:    loopAModID,
-		LoopBModule:    loopBModID,
-		Loop2AModule:   loop2AModID,
-		Loop2BModule:   loop2BModID,
-		StreamSI:       streamSI,
-		NullSinkName:   nullName,
-		GainAName:      gainAName,
-		GainBName:      gainBName,
-	}, nil
+	return plan.routing(streamSI), nil
+}
+
+type crossfaderNames struct {
+	null  string
+	gainA string
+	gainB string
+	sinkA string
+	sinkB string
+}
+
+type crossfaderSetup struct {
+	names  crossfaderNames
+	loaded []uint32
+	r      CrossfaderRouting
+}
+
+func newCrossfaderSetup(tag, sinkANodeName, sinkBNodeName string) *crossfaderSetup {
+	nullName := "smc_" + tag + "_void"
+	gainAName := "smc_" + tag + "_gain_a"
+	gainBName := "smc_" + tag + "_gain_b"
+	return &crossfaderSetup{
+		names: crossfaderNames{
+			null:  nullName,
+			gainA: gainAName,
+			gainB: gainBName,
+			sinkA: sinkANodeName,
+			sinkB: sinkBNodeName,
+		},
+		r: CrossfaderRouting{
+			NullSinkName: nullName,
+			GainAName:    gainAName,
+			GainBName:    gainBName,
+		},
+	}
+}
+
+func (s *crossfaderSetup) loadModules(ctx context.Context, c *Client) error {
+	steps := []struct {
+		label string
+		name  string
+		args  string
+		set   func(uint32)
+	}{
+		{
+			label: "null sink",
+			name:  "module-null-sink",
+			args:  "sink_name=" + s.names.null + " sink_properties=device.description=" + s.names.null,
+			set:   func(id uint32) { s.r.NullSinkModule = id },
+		},
+		{
+			label: "gain sink A",
+			name:  "module-null-sink",
+			args:  "sink_name=" + s.names.gainA + " sink_properties=device.description=" + s.names.gainA,
+			set:   func(id uint32) { s.r.GainAModule = id },
+		},
+		{
+			label: "gain sink B",
+			name:  "module-null-sink",
+			args:  "sink_name=" + s.names.gainB + " sink_properties=device.description=" + s.names.gainB,
+			set:   func(id uint32) { s.r.GainBModule = id },
+		},
+		{
+			label: "loopback A",
+			name:  "module-loopback",
+			args:  loopbackArgs(s.names.null+".monitor", s.names.gainA),
+			set:   func(id uint32) { s.r.LoopAModule = id },
+		},
+		{
+			label: "loopback B",
+			name:  "module-loopback",
+			args:  loopbackArgs(s.names.null+".monitor", s.names.gainB),
+			set:   func(id uint32) { s.r.LoopBModule = id },
+		},
+		{
+			label: "loopback 2A",
+			name:  "module-loopback",
+			args:  loopbackArgs(s.names.gainA+".monitor", s.names.sinkA),
+			set:   func(id uint32) { s.r.Loop2AModule = id },
+		},
+		{
+			label: "loopback 2B",
+			name:  "module-loopback",
+			args:  loopbackArgs(s.names.gainB+".monitor", s.names.sinkB),
+			set:   func(id uint32) { s.r.Loop2BModule = id },
+		},
+	}
+
+	for _, step := range steps {
+		id, err := c.LoadModule(ctx, step.name, step.args)
+		if err != nil {
+			return fmt.Errorf("%s: %w", step.label, err)
+		}
+		s.loaded = append(s.loaded, id)
+		step.set(id)
+	}
+	return nil
+}
+
+func (s *crossfaderSetup) unloadLoaded(ctx context.Context, c *Client) {
+	for i := len(s.loaded) - 1; i >= 0; i-- {
+		_ = c.UnloadModule(ctx, s.loaded[i])
+	}
+}
+
+func (s *crossfaderSetup) routing(streamSI uint32) *CrossfaderRouting {
+	s.r.StreamSI = streamSI
+	return &s.r
+}
+
+func loopbackArgs(source, sink string) string {
+	return "source=" + source + " sink=" + sink +
+		" source.dont.move=true sink.dont.move=true latency_msec=50"
 }
 
 // SetCrossfaderGains adjusts the per-output crossfader gain by setting each
