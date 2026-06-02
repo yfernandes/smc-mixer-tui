@@ -88,20 +88,19 @@ func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 	d := New(pw)
 	d.Bind(0, 42, "Firefox", audio.KindSource, "")
 
-	want := 64.0 / 127.0
-	// Simulate poll: actual volume is at 64/127.
-	d.UpdateActualVolume(0, want)
-	// Fader reaches the same position → picks up → calls SetVolume.
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	// Fader must reach zero first to sync, regardless of the actual stream volume.
+	send(d, midi.FaderMsg{Channel: 0, Value: 0})
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("channel should be synced after fader reaches zero")
+	}
 
+	want := 64.0 / 127.0
+	send(d, midi.FaderMsg{Channel: 0, Value: 64})
 	if !approxEq(pw.volumes[42], want) {
 		t.Fatalf("SetVolume got %.9f, want %.9f", pw.volumes[42], want)
 	}
 	if !approxEq(d.Snapshot()[0].FaderPos, want) {
 		t.Fatalf("FaderPos = %.9f, want %.9f", d.Snapshot()[0].FaderPos, want)
-	}
-	if !d.Snapshot()[0].Synced {
-		t.Fatal("channel should be synced after pickup")
 	}
 }
 
@@ -109,69 +108,17 @@ func TestFaderNoCallBeforePickup(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 	d.Bind(0, 42, "Firefox", audio.KindSource, "")
-	// Actual volume at 80%; fader sent at 50% — too far, should NOT call SetVolume.
-	d.UpdateActualVolume(0, 0.80)
+	// Fader above zero — must not sync or call SetVolume until zero is reached.
 	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // 64/127 ≈ 0.504
 
 	if _, called := pw.volumes[42]; called {
-		t.Fatal("SetVolume must not be called before fader picks up actual volume")
+		t.Fatal("SetVolume must not be called before fader reaches zero")
 	}
 	if d.Snapshot()[0].Synced {
-		t.Fatal("channel should not be synced when fader is far from actual volume")
+		t.Fatal("channel should not be synced when fader has not reached zero")
 	}
 }
 
-func TestFaderDesyncsOnExternalChange(t *testing.T) {
-	pw := newFakePW()
-	d := New(pw)
-	d.Bind(0, 42, "Firefox", audio.KindSource, "")
-
-	// Pick up at 0.5.
-	d.UpdateActualVolume(0, 0.5)
-	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // ≈0.504, within threshold
-	if !d.Snapshot()[0].Synced {
-		t.Fatal("should be synced after pickup")
-	}
-
-	// External change: keyboard shortcut lowers volume significantly.
-	d.UpdateActualVolume(0, 0.2)
-	if d.Snapshot()[0].Synced {
-		t.Fatal("external volume change should desync the channel")
-	}
-}
-
-func TestFaderDesyncParksMotorBelowCap(t *testing.T) {
-	leds := newFakeLEDs()
-	d := New(newFakePW())
-	d.SetLEDWriter(leds)
-	d.Bind(0, 42, "Firefox", audio.KindSource, "")
-
-	d.UpdateActualVolume(0, 0.5)
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
-	d.UpdateActualVolume(0, 0.9)
-
-	if leds.faderLEDs[0] {
-		t.Fatal("fader LED should turn off after external desync")
-	}
-	if !approxEq(leds.faderPosition[0], syncFaderCap) {
-		t.Fatalf("parked fader = %.3f, want %.3f", leds.faderPosition[0], syncFaderCap)
-	}
-}
-
-func TestFaderDesyncParksMotorAtActualVolumeBelowCap(t *testing.T) {
-	leds := newFakeLEDs()
-	d := New(newFakePW())
-	d.SetLEDWriter(leds)
-	d.Bind(0, 42, "Firefox", audio.KindSource, "")
-
-	d.UpdateActualVolume(0, 0.5)
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
-	d.UpdateActualVolume(0, 0.1)
-
-	if !approxEq(leds.faderPosition[0], 0.1) {
-		t.Fatalf("parked fader = %.3f, want actual volume", leds.faderPosition[0])
-	}
-}
 
 func TestFaderZeroAutoPickup(t *testing.T) {
 	pw := newFakePW()
@@ -185,12 +132,12 @@ func TestFaderZeroAutoPickup(t *testing.T) {
 	}
 }
 
-func TestFaderMaxPickup(t *testing.T) {
+func TestFaderMaxAfterZeroSync(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 	d.Bind(0, 1, "test", audio.KindSource, "")
-	d.UpdateActualVolume(0, 1.0)
-	send(d, midi.FaderMsg{Channel: 0, Value: 127})
+	send(d, midi.FaderMsg{Channel: 0, Value: 0})   // sync at zero
+	send(d, midi.FaderMsg{Channel: 0, Value: 127}) // drive to max
 	if !approxEq(pw.volumes[1], 1.0) {
 		t.Fatalf("value 127 → volume %.9f, want 1.0", pw.volumes[1])
 	}
@@ -417,8 +364,8 @@ func TestStopDebouncesDuplicatePresses(t *testing.T) {
 func TestUpdateBindingMetadataPreservesFaderStateAndEnablesMPRIS(t *testing.T) {
 	d := New(newFakePW())
 	d.Bind(0, 42, "Zen", audio.KindSource, "")
-	d.UpdateActualVolume(0, 64.0/127.0)
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	send(d, midi.FaderMsg{Channel: 0, Value: 0})  // sync at zero
+	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // move to working position
 	before := d.Snapshot()[0]
 	if !before.Synced {
 		t.Fatal("expected channel to be synced before metadata refresh")

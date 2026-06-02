@@ -1,8 +1,6 @@
 package dispatcher
 
 import (
-	"math"
-
 	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
@@ -15,11 +13,9 @@ type streamBinding struct {
 }
 
 type faderUpdate struct {
-	bound             bool
-	streamID          uint32
-	synced            bool
-	justDesynced      bool
-	desyncFaderTarget float64
+	bound    bool
+	streamID uint32
+	synced   bool
 }
 
 func newChannel() Channel {
@@ -84,24 +80,11 @@ func (c *Channel) toggleButton(kind midi.ButtonKind) bool {
 	}
 }
 
-func (c *Channel) updateActualVolume(vol float64) faderUpdate {
-	c.ActualVolume = vol
-	wasSynced := c.Synced
-	if c.Synced && math.Abs(vol-c.LastSetVol) > PickupThreshold {
-		c.Synced = false
-	}
-
-	u := c.faderUpdate()
-	u.justDesynced = wasSynced && !c.Synced
-	if u.justDesynced {
-		u.desyncFaderTarget = min(vol, syncFaderCap)
-	}
-	return u
-}
-
 func (c *Channel) moveFader(pos float64) faderUpdate {
 	c.FaderPos = pos
-	if !c.Synced && math.Abs(pos-c.ActualVolume) < PickupThreshold {
+	// Sync requires the fader to pass through zero first. This prevents
+	// an unexpected volume blast when binding a stream that was at a high level.
+	if !c.Synced && pos < PickupThreshold {
 		c.Synced = true
 	}
 	if c.Synced {

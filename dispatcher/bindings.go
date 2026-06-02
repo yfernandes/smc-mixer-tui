@@ -5,8 +5,8 @@ import "github.com/yfernandes/smc-mixer-tui/audio"
 // Bind assigns a PipeWire stream to a channel strip.
 // If the stream is already bound to a different channel, that channel is
 // unbound first — a stream may only be controlled by one channel at a time.
-// The new channel starts unsynced: the fader must reach the actual volume
-// before it takes control of PipeWire.
+// The new channel starts unsynced: the fader must be brought to zero before
+// it takes control of PipeWire, preventing accidental volume blasts on rebind.
 func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
 	d.mu.Lock()
 	// Release any other channel already holding this stream.
@@ -30,7 +30,7 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 		for _, i := range evicted {
 			leds.SetFaderLED(i, false)
 		}
-		leds.SetFaderLED(ch, false) // off until fader picks up
+		leds.SetFaderLED(ch, false) // off until fader reaches zero
 	}
 }
 

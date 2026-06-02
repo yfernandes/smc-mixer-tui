@@ -9,8 +9,9 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
 
-// PickupThreshold is the fader-to-actual-volume tolerance for sync detection
-// and external-change detection (≈2 MIDI steps out of 127).
+type crossGains = [2]float64
+
+// PickupThreshold is the fader-to-actual-volume tolerance for sync detection (≈2 MIDI steps out of 127).
 const PickupThreshold = 2.0 / 127.0
 
 // PipeWire is the subset of pipewire.Client used by the dispatcher.
@@ -44,10 +45,10 @@ type Channel struct {
 	Name         string         // display name; "" if unbound
 	Kind         audio.NodeKind // functional role; set on Bind
 	MPRISName    string         // MPRIS player name suffix; "" if not an MPRIS source
-	ActualVolume float64        // volume reported by PipeWire — the source of truth
+	ActualVolume float64        // volume last reported by PipeWire; display only
 	FaderPos     float64        // physical hardware fader position, 0.0–1.0
 	LastSetVol   float64        // last volume we sent to PipeWire; -1 = never
-	Synced       bool           // fader has picked up ActualVolume; controls PipeWire when true
+	Synced       bool           // fader has passed through zero and now controls PipeWire
 	Knob         int            // 0–127, accumulated relative position; starts at 64
 	Mute         bool           // user-set mute
 	SoloMuted    bool           // muted as a side-effect of another same-kind channel being soloed
@@ -81,4 +82,10 @@ type Dispatcher struct {
 	globalLEDs [5]bool // toggle state for transport buttons, indexed by globalLEDActions
 	lastStopAt [8]time.Time
 	mu         sync.RWMutex
+
+	// Async PipeWire write workers. Each channel has a size-1 latest-value buffer.
+	// When volDebounce == 0 (default / tests), writes are synchronous and workers are unused.
+	volDebounce  time.Duration
+	volWorkers   [8]chan float64
+	crossWorkers [8]chan crossGains
 }

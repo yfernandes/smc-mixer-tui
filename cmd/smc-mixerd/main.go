@@ -52,6 +52,7 @@ func main() {
 	}
 
 	disp := dispatcher.New(pw)
+	disp.SetVolDebounce(200 * time.Millisecond)
 	disp.SetMPRISCaller(streams.NewController())
 	applyBindings(cfg, disp, initial)
 
@@ -68,8 +69,8 @@ func main() {
 		}
 	}()
 
-	midiCh := make(chan midi.Msg, 64)
-	dispCh := make(chan midi.Msg, 64)
+	midiCh := make(chan midi.Msg, 256)
+	dispCh := make(chan midi.Msg, 256)
 
 	go routeMIDI(midiCh, dispCh, srv, disp)
 	go disp.Run(ctx, dispCh)
