@@ -5,14 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"syscall"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/config"
-	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/ui"
 )
 
@@ -20,20 +17,10 @@ func main() {
 	cfgFlag := flag.String("config", "", "config file (default: "+config.DefaultPath()+")")
 	flag.Parse()
 
-	cfgPath := *cfgFlag
-	if cfgPath == "" {
-		cfgPath = config.DefaultPath()
-	}
-
-	client, state, err := daemon.Connect()
+	cfgPath := resolveConfigPath(*cfgFlag)
+	client, state, err := connectOrStartDaemon(cfgPath)
 	if err != nil {
-		if startErr := startDaemon(cfgPath); startErr != nil {
-			die("start daemon: %v", startErr)
-		}
-		client, state, err = daemon.ConnectWithRetry(5 * time.Second)
-		if err != nil {
-			die("connect to daemon: %v", err)
-		}
+		die("%v", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -52,19 +39,11 @@ func main() {
 	cancel()
 }
 
-// startDaemon launches smc-mixerd as a detached background process.
-func startDaemon(cfgPath string) error {
-	daemonBin, err := exec.LookPath("smc-mixerd")
-	if err != nil {
-		return fmt.Errorf("smc-mixerd not found in PATH: %w", err)
+func resolveConfigPath(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
 	}
-	args := []string{}
-	if cfgPath != config.DefaultPath() {
-		args = append(args, "--config", cfgPath)
-	}
-	cmd := exec.Command(daemonBin, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	return cmd.Start()
+	return config.DefaultPath()
 }
 
 func die(format string, args ...any) {

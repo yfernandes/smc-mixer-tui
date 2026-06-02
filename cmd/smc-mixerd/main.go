@@ -7,12 +7,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"regexp"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
@@ -59,7 +56,7 @@ func main() {
 	applyBindings(cfg, disp, initial)
 
 	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
-	manageCrossfaders(ctx, disp.Snapshot(), initial)
+	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
 	srv := daemon.NewServer(disp)
 	srv.BroadcastStreams(initial)
@@ -77,7 +74,7 @@ func main() {
 	go disp.Run(ctx, dispCh)
 	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, midiCh)
 	go runVolumePoller(ctx, pw, disp, srv)
-	go pollStreams(ctx, enricher, cfg, disp, srv, manageCrossfaders)
+	go pollStreams(ctx, enricher, cfg, disp, srv, manageCrossfaders.Sync)
 
 	<-ctx.Done()
 }
@@ -210,165 +207,6 @@ func pollStreams(
 		srv.BroadcastStreams(ss)
 		srv.BroadcastSnapshot(disp.Snapshot())
 	})
-}
-
-func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
-	snap := disp.Snapshot()
-	for ch := range 8 {
-		chCfg := cfg.ChannelFor(ch)
-		if chCfg == nil {
-			continue
-		}
-		if channelBindingLive(snap[ch], ss) {
-			continue
-		}
-		if s := bindingCandidate(ch, cfg, chCfg.Bind, ss); s != nil {
-			disp.Bind(ch, s.ID, s.Name, s.Kind, mprisName(*s))
-		}
-	}
-}
-
-func channelBindingLive(ch dispatcher.Channel, ss []streams.EnrichedStream) bool {
-	return ch.StreamID != nil && streamLive(*ch.StreamID, ss)
-}
-
-func bindingCandidate(ch int, cfg *config.Config, bind config.BindConfig, ss []streams.EnrichedStream) *streams.EnrichedStream {
-	matchStr := cfg.MatchStringFor(ch)
-	for i := range ss {
-		if streamMatchesBind(ss[i], bind, matchStr) {
-			return &ss[i]
-		}
-	}
-	return nil
-}
-
-func mprisName(s streams.EnrichedStream) string {
-	if s.Source == streams.SourceMPRIS {
-		return s.Name
-	}
-	return ""
-}
-
-func streamMatchesBind(s streams.EnrichedStream, bind config.BindConfig, resolvedMatch string) bool {
-	switch bind.Type {
-	case "input":
-		if s.Kind != audio.KindMic {
-			return false
-		}
-	case "playback":
-		if s.Kind != audio.KindSource {
-			return false
-		}
-	case "output":
-		if s.Kind != audio.KindSink {
-			return false
-		}
-	}
-	if bind.MatchRegex != "" {
-		re, err := regexp.Compile("(?i)" + bind.MatchRegex)
-		if err == nil && (re.MatchString(s.Name) || re.MatchString(s.BindKey)) {
-			return true
-		}
-		return false
-	}
-	if resolvedMatch != "" {
-		lower := strings.ToLower(resolvedMatch)
-		return strings.Contains(strings.ToLower(s.Name), lower) ||
-			strings.Contains(strings.ToLower(s.BindKey), lower)
-	}
-	return false
-}
-
-func streamLive(id uint32, ss []streams.EnrichedStream) bool {
-	for _, s := range ss {
-		if s.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-type crossfaderState struct {
-	routing  *pipewire.CrossfaderRouting
-	streamID uint32
-}
-
-type channelCrossfader struct {
-	pw      *pipewire.Client
-	routing *pipewire.CrossfaderRouting
-}
-
-func (c *channelCrossfader) SetGains(ctx context.Context, volA, volB float64) error {
-	return c.pw.SetCrossfaderGains(ctx, c.routing, volA, volB)
-}
-
-func newCrossfaderManager(cfg *config.Config, pw *pipewire.Client, disp *dispatcher.Dispatcher) func(context.Context, [8]dispatcher.Channel, []streams.EnrichedStream) {
-	active := [8]*crossfaderState{}
-
-	return func(ctx context.Context, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) {
-		for ch := range 8 {
-			knob, ok := cfg.KnobFor(ch)
-			isCrossfade := ok && knob.Type == "crossfade"
-			streamID := snap[ch].StreamID
-
-			if active[ch] != nil {
-				gone := !isCrossfade || streamID == nil || *streamID != active[ch].streamID
-				if gone {
-					pw.TeardownCrossfader(ctx, active[ch].routing)
-					disp.SetCrossfader(ch, nil, "", "")
-					active[ch] = nil
-				}
-			}
-
-			if !isCrossfade || streamID == nil || active[ch] != nil {
-				continue
-			}
-
-			sinkANodeName, sinkBNodeName, nameA, nameB := resolveCrossfaderSinks(cfg, knob, ss)
-			if sinkANodeName == "" || sinkBNodeName == "" {
-				log.Printf("crossfader ch%d: sinks not found (A=%q B=%q)", ch, knob.OutputA, knob.OutputB)
-				continue
-			}
-
-			var streamNodeName string
-			for _, s := range ss {
-				if s.ID == *streamID {
-					streamNodeName = s.NodeName
-					break
-				}
-			}
-
-			tag := fmt.Sprintf("ch%d", ch)
-			routing, err := pw.SetupCrossfader(ctx, tag, *streamID, streamNodeName, sinkANodeName, sinkBNodeName)
-			if err != nil {
-				log.Printf("crossfader ch%d setup: %v", ch, err)
-				continue
-			}
-
-			active[ch] = &crossfaderState{routing: routing, streamID: *streamID}
-			ctrl := &channelCrossfader{pw: pw, routing: routing}
-			disp.SetCrossfader(ch, ctrl, nameA, nameB)
-			log.Printf("crossfader ch%d: %s ↔ %s", ch, nameA, nameB)
-		}
-	}
-}
-
-func resolveCrossfaderSinks(cfg *config.Config, knob config.KnobConfig, ss []streams.EnrichedStream) (nodeA, nodeB, nameA, nameB string) {
-	descA := strings.ToLower(cfg.ResolveOutput(knob.OutputA))
-	descB := strings.ToLower(cfg.ResolveOutput(knob.OutputB))
-	for _, s := range ss {
-		if s.Kind != audio.KindSink {
-			continue
-		}
-		lower := strings.ToLower(s.Name)
-		if nodeA == "" && descA != "" && strings.Contains(lower, descA) {
-			nodeA, nameA = s.NodeName, s.Name
-		}
-		if nodeB == "" && descB != "" && strings.Contains(lower, descB) {
-			nodeB, nameB = s.NodeName, s.Name
-		}
-	}
-	return
 }
 
 func die(format string, args ...any) {
