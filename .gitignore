@@ -1,6 +1,7 @@
 # Go binaries
-smc-mixer
 main
+smc-mixer
+smc-mixerd
 
 # Build output
 dist/

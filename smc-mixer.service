@@ -1,0 +1,13 @@
+[Unit]
+Description=SMC Mixer MIDI daemon
+Documentation=https://github.com/yfernandes/smc-mixer-tui
+After=sound.target pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/smc-mixerd
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

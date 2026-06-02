@@ -41,11 +41,12 @@ type Model struct {
 	deviceConnected bool
 }
 
-// New creates the initial Model. initial is the result of an initial Enrich call.
-func New(disp Dispatcher, initial []streams.EnrichedStream) Model {
+// New creates the initial Model. snap is the initial channel state and initial
+// is the initial enriched stream list (both provided by the daemon on connect).
+func New(disp Dispatcher, snap [8]dispatcher.Channel, initial []streams.EnrichedStream) Model {
 	return Model{
 		disp:            disp,
-		channels:        disp.Snapshot(),
+		channels:        snap,
 		enriched:        sortedByKind(initial),
 		deviceConnected: true, // assume connected until told otherwise
 	}
