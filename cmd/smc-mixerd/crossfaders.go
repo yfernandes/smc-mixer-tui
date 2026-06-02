@@ -42,7 +42,7 @@ func (m *crossfaderManager) Sync(ctx context.Context, snap [8]dispatcher.Channel
 
 func (m *crossfaderManager) syncChannel(ctx context.Context, ch int, channel dispatcher.Channel, ss []streams.EnrichedStream) {
 	knob, ok := m.cfg.KnobFor(ch)
-	isCrossfade := ok && knob.Type == "crossfade"
+	isCrossfade := ok && knob.IsCrossfade()
 	streamID := channel.StreamID
 
 	if m.active[ch] != nil && (!isCrossfade || streamID == nil || *streamID != m.active[ch].streamID) {

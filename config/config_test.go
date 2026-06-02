@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/yfernandes/smc-mixer-tui/audio"
 )
 
 func TestLoadMissing(t *testing.T) {
@@ -141,6 +143,43 @@ func TestKnobFor_missingChannel(t *testing.T) {
 	_, ok := cfg.KnobFor(5)
 	if ok {
 		t.Error("expected ok=false for unconfigured channel")
+	}
+}
+
+func TestKnobConfigIsCrossfade(t *testing.T) {
+	if !(KnobConfig{Type: KnobCrossfade}).IsCrossfade() {
+		t.Fatal("crossfade knob should report true")
+	}
+	if (KnobConfig{Type: KnobGain}).IsCrossfade() {
+		t.Fatal("gain knob should report false")
+	}
+}
+
+func TestBindConfigAudioKind(t *testing.T) {
+	cases := []struct {
+		name string
+		bind BindConfig
+		want audio.NodeKind
+	}{
+		{"input", BindConfig{Type: BindInput}, audio.KindMic},
+		{"playback", BindConfig{Type: BindPlayback}, audio.KindSource},
+		{"output", BindConfig{Type: BindOutput}, audio.KindSink},
+	}
+
+	for _, c := range cases {
+		got, ok := c.bind.AudioKind()
+		if !ok {
+			t.Fatalf("%s: expected audio kind", c.name)
+		}
+		if got != c.want {
+			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestBindConfigAudioKindUnknown(t *testing.T) {
+	if _, ok := (BindConfig{Type: "custom"}).AudioKind(); ok {
+		t.Fatal("unknown bind type should not report an audio kind")
 	}
 }
 

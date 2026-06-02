@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -48,19 +47,8 @@ func mprisName(s streams.EnrichedStream) string {
 }
 
 func streamMatchesBind(s streams.EnrichedStream, bind config.BindConfig, resolvedMatch string) bool {
-	switch bind.Type {
-	case "input":
-		if s.Kind != audio.KindMic {
-			return false
-		}
-	case "playback":
-		if s.Kind != audio.KindSource {
-			return false
-		}
-	case "output":
-		if s.Kind != audio.KindSink {
-			return false
-		}
+	if wantKind, ok := bind.AudioKind(); ok && s.Kind != wantKind {
+		return false
 	}
 	if bind.MatchRegex != "" {
 		re, err := regexp.Compile("(?i)" + bind.MatchRegex)

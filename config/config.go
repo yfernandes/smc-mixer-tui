@@ -6,14 +6,15 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/yfernandes/smc-mixer-tui/audio"
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the full on-disk representation of smc-mixer settings.
 type Config struct {
-	MIDI     MIDIConfig              `yaml:"midi"`
-	Defaults DefaultsConfig          `yaml:"defaults"`
-	Outputs  map[string]string       `yaml:"outputs"`  // alias → full device description
+	MIDI     MIDIConfig               `yaml:"midi"`
+	Defaults DefaultsConfig           `yaml:"defaults"`
+	Outputs  map[string]string        `yaml:"outputs"`  // alias → full device description
 	Channels map[string]ChannelConfig `yaml:"channels"` // "0"–"7" → channel config
 }
 
@@ -31,9 +32,22 @@ type DefaultsConfig struct {
 
 // KnobConfig describes how the hardware knob on a channel is used.
 type KnobConfig struct {
-	Type    string `yaml:"type"`               // "gain", "crossfade", or "none"
-	OutputA string `yaml:"output-a,omitempty"` // output alias (from Outputs); crossfade only
-	OutputB string `yaml:"output-b,omitempty"`
+	Type    KnobType `yaml:"type"`               // "gain", "crossfade", or "none"
+	OutputA string   `yaml:"output-a,omitempty"` // output alias (from Outputs); crossfade only
+	OutputB string   `yaml:"output-b,omitempty"`
+}
+
+// KnobType describes how a channel knob behaves.
+type KnobType string
+
+const (
+	KnobGain      KnobType = "gain"
+	KnobCrossfade KnobType = "crossfade"
+	KnobNone      KnobType = "none"
+)
+
+func (k KnobConfig) IsCrossfade() bool {
+	return k.Type == KnobCrossfade
 }
 
 // ChannelConfig describes one mixer channel strip.
@@ -45,9 +59,35 @@ type ChannelConfig struct {
 
 // BindConfig describes how a channel finds its PipeWire stream.
 type BindConfig struct {
-	Type       string `yaml:"type"`                  // "input", "playback", or "output"
-	Match      string `yaml:"match,omitempty"`        // case-insensitive substring
-	MatchRegex string `yaml:"match-regex,omitempty"`  // regex applied to stream name/BindKey
+	Type       BindType `yaml:"type"`                  // "input", "playback", or "output"
+	Match      string   `yaml:"match,omitempty"`       // case-insensitive substring
+	MatchRegex string   `yaml:"match-regex,omitempty"` // regex applied to stream name/BindKey
+}
+
+// BindType describes which kind of audio node a channel can bind to.
+type BindType string
+
+const (
+	BindInput    BindType = "input"
+	BindPlayback BindType = "playback"
+	BindOutput   BindType = "output"
+)
+
+func (b BindConfig) IsOutput() bool {
+	return b.Type == BindOutput
+}
+
+func (b BindConfig) AudioKind() (audio.NodeKind, bool) {
+	switch b.Type {
+	case BindInput:
+		return audio.KindMic, true
+	case BindPlayback:
+		return audio.KindSource, true
+	case BindOutput:
+		return audio.KindSink, true
+	default:
+		return 0, false
+	}
 }
 
 // DefaultPath returns the canonical config file location:
@@ -118,7 +158,7 @@ func (c *Config) MatchStringFor(ch int) string {
 		return ""
 	}
 	match := chCfg.Bind.Match
-	if chCfg.Bind.Type == "output" && match != "" {
+	if chCfg.Bind.IsOutput() && match != "" {
 		if desc, ok := c.Outputs[match]; ok {
 			return desc
 		}
@@ -139,11 +179,11 @@ func (c *Config) KnobFor(ch int) (KnobConfig, bool) {
 		return *chCfg.Knob, true
 	}
 	switch chCfg.Bind.Type {
-	case "input":
+	case BindInput:
 		return c.Defaults.InputKnob, true
-	case "playback":
+	case BindPlayback:
 		return c.Defaults.PlaybackKnob, true
-	case "output":
+	case BindOutput:
 		return c.Defaults.OutputKnob, true
 	}
 	return KnobConfig{}, true
