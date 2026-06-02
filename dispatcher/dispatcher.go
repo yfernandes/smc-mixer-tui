@@ -10,7 +10,7 @@ import (
 func New(pw PipeWire) *Dispatcher {
 	d := &Dispatcher{pw: pw}
 	for i := range d.channels {
-		d.channels[i].Knob = 64
+		d.channels[i] = newChannel()
 	}
 	return d
 }

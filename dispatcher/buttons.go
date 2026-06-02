@@ -53,24 +53,17 @@ func (d *Dispatcher) applyButtonState(m midi.ButtonMsg) buttonEffects {
 
 	switch m.Kind {
 	case midi.ButtonMute:
-		ch.Mute = !ch.Mute
-		effects.ledState = ch.Mute || ch.SoloMuted
+		effects.ledState = ch.toggleButton(m.Kind)
 	case midi.ButtonSolo:
-		ch.Solo = !ch.Solo
-		effects.ledState = ch.Solo
+		effects.ledState = ch.toggleButton(m.Kind)
 	case midi.ButtonRec:
-		ch.Rec = !ch.Rec
-		effects.ledState = ch.Rec
+		effects.ledState = ch.toggleButton(m.Kind)
 	case midi.ButtonStop:
-		ch.Stop = !ch.Stop
-		effects.ledState = ch.Stop
+		effects.ledState = ch.toggleButton(m.Kind)
 	}
 
-	effects.chBound = ch.StreamID != nil
-	if effects.chBound {
-		effects.chID = *ch.StreamID
-	}
-	effects.chMuteEffective = ch.Mute || ch.SoloMuted
+	effects.chID, effects.chBound = ch.boundID()
+	effects.chMuteEffective = ch.effectiveMute()
 	effects.chMPRIS = ch.MPRISName
 
 	if m.Kind == midi.ButtonSolo {
@@ -97,14 +90,15 @@ func (d *Dispatcher) recomputeSoloGroup(kind audio.NodeKind) ([]muteUpdate, []bu
 		}
 		c := &d.channels[i]
 		c.SoloMuted = anySoloed && !c.Solo
+		id, _ := c.boundID()
 		muteUpdates = append(muteUpdates, muteUpdate{
 			ch:    i,
-			id:    *c.StreamID,
+			id:    id,
 			bound: true,
-			mute:  c.Mute || c.SoloMuted,
+			mute:  c.effectiveMute(),
 		})
 		leds = append(leds,
-			buttonLED{ch: i, kind: midi.ButtonMute, active: c.Mute || c.SoloMuted},
+			buttonLED{ch: i, kind: midi.ButtonMute, active: c.effectiveMute()},
 			buttonLED{ch: i, kind: midi.ButtonSolo, active: c.Solo},
 		)
 	}

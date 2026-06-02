@@ -38,6 +38,32 @@ func (f *fakeMPRIS) PlayPause(_ context.Context, playerName string) error {
 	return nil
 }
 
+type fakeLEDs struct {
+	faderLEDs     map[int]bool
+	faderPosition map[int]float64
+}
+
+func newFakeLEDs() *fakeLEDs {
+	return &fakeLEDs{
+		faderLEDs:     make(map[int]bool),
+		faderPosition: make(map[int]float64),
+	}
+}
+
+func (f *fakeLEDs) SetButtonLED(ch int, kind midi.ButtonKind, on bool) {
+}
+
+func (f *fakeLEDs) SetFaderLED(ch int, blink bool) {
+	f.faderLEDs[ch] = blink
+}
+
+func (f *fakeLEDs) SetFaderPosition(ch int, vol float64) {
+	f.faderPosition[ch] = vol
+}
+
+func (f *fakeLEDs) SetGlobalLED(action midi.GlobalAction, on bool) {
+}
+
 // send drives a single message through a fresh Run call.
 func send(d *Dispatcher, msg midi.Msg) {
 	ch := make(chan midi.Msg, 1)
@@ -111,6 +137,39 @@ func TestFaderDesyncsOnExternalChange(t *testing.T) {
 	d.UpdateActualVolume(0, 0.2)
 	if d.Snapshot()[0].Synced {
 		t.Fatal("external volume change should desync the channel")
+	}
+}
+
+func TestFaderDesyncParksMotorBelowCap(t *testing.T) {
+	leds := newFakeLEDs()
+	d := New(newFakePW())
+	d.SetLEDWriter(leds)
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+
+	d.UpdateActualVolume(0, 0.5)
+	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	d.UpdateActualVolume(0, 0.9)
+
+	if leds.faderLEDs[0] {
+		t.Fatal("fader LED should turn off after external desync")
+	}
+	if !approxEq(leds.faderPosition[0], syncFaderCap) {
+		t.Fatalf("parked fader = %.3f, want %.3f", leds.faderPosition[0], syncFaderCap)
+	}
+}
+
+func TestFaderDesyncParksMotorAtActualVolumeBelowCap(t *testing.T) {
+	leds := newFakeLEDs()
+	d := New(newFakePW())
+	d.SetLEDWriter(leds)
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+
+	d.UpdateActualVolume(0, 0.5)
+	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	d.UpdateActualVolume(0, 0.1)
+
+	if !approxEq(leds.faderPosition[0], 0.1) {
+		t.Fatalf("parked fader = %.3f, want actual volume", leds.faderPosition[0])
 	}
 }
 
@@ -349,6 +408,20 @@ func TestStopNoMPRISNoCall(t *testing.T) {
 	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
 }
 
+func TestStopAfterUnbindDoesNotCallStaleMPRIS(t *testing.T) {
+	d := New(newFakePW())
+	m := &fakeMPRIS{}
+	d.SetMPRISCaller(m)
+	d.Bind(0, 10, "Spotify", audio.KindSource, "Spotify")
+	d.Unbind(0)
+
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
+
+	if len(m.calls) != 0 {
+		t.Fatalf("unbound channel must not call stale MPRIS player, got %v", m.calls)
+	}
+}
+
 // — crossfader tests —
 
 // fakeCrossfader records SetGains calls for testing.
@@ -457,11 +530,30 @@ func TestBindEvictsDuplicateStream(t *testing.T) {
 	}
 }
 
+func TestBindEvictionClearsStaleMPRIS(t *testing.T) {
+	d := New(newFakePW())
+	m := &fakeMPRIS{}
+	d.SetMPRISCaller(m)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "Spotify")
+	d.Bind(1, 42, "Spotify", audio.KindSource, "Spotify")
+
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonStop, Pressed: true})
+
+	if len(m.calls) != 0 {
+		t.Fatalf("evicted channel must not call stale MPRIS player, got %v", m.calls)
+	}
+}
+
 func TestUnbind(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
-	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+	d.Bind(0, 42, "Firefox", audio.KindSource, "firefox")
 	d.Unbind(0)
+
+	snap := d.Snapshot()
+	if snap[0].StreamID != nil || snap[0].Name != "" || snap[0].MPRISName != "" {
+		t.Fatalf("unbind should clear stream metadata, got %+v", snap[0])
+	}
 
 	send(d, midi.FaderMsg{Channel: 0, Value: 64})
 	if len(pw.volumes) != 0 {

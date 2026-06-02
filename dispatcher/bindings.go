@@ -12,20 +12,17 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 	// Release any other channel already holding this stream.
 	var evicted []int
 	for i := range d.channels {
-		if i != ch && d.channels[i].StreamID != nil && *d.channels[i].StreamID == id {
-			d.channels[i].StreamID = nil
-			d.channels[i].Name = ""
-			d.channels[i].Synced = false
+		if i != ch && d.channels[i].boundTo(id) {
+			d.channels[i].clearBinding()
 			evicted = append(evicted, i)
 		}
 	}
-	d.channels[ch].StreamID = &id
-	d.channels[ch].Name = name
-	d.channels[ch].Kind = kind
-	d.channels[ch].MPRISName = mprisName
-	d.channels[ch].Synced = false
-	d.channels[ch].ActualVolume = 0
-	d.channels[ch].LastSetVol = -1
+	d.channels[ch].bind(streamBinding{
+		id:        id,
+		name:      name,
+		kind:      kind,
+		mprisName: mprisName,
+	})
 	leds := d.leds
 	d.mu.Unlock()
 
@@ -40,9 +37,7 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 // Unbind removes the stream binding from a channel strip.
 func (d *Dispatcher) Unbind(ch int) {
 	d.mu.Lock()
-	d.channels[ch].StreamID = nil
-	d.channels[ch].Name = ""
-	d.channels[ch].Synced = false
+	d.channels[ch].clearBinding()
 	leds := d.leds
 	d.mu.Unlock()
 

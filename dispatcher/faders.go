@@ -3,7 +3,6 @@ package dispatcher
 import (
 	"context"
 	"log"
-	"math"
 
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
@@ -18,26 +17,16 @@ const syncFaderCap = 0.25
 // point to pick up from.
 func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
 	d.mu.Lock()
-	c := &d.channels[ch]
-	c.ActualVolume = vol
-	wasSync := c.Synced
-	if c.Synced && math.Abs(vol-c.LastSetVol) > PickupThreshold {
-		c.Synced = false
-	}
-	justDesynced := wasSync && !c.Synced
-	bound, synced, leds := c.StreamID != nil, c.Synced, d.leds
+	update := d.channels[ch].updateActualVolume(vol)
+	leds := d.leds
 	d.mu.Unlock()
 
 	if leds == nil {
 		return
 	}
-	leds.SetFaderLED(ch, bound && synced)
-	if justDesynced {
-		target := vol
-		if target > syncFaderCap {
-			target = syncFaderCap
-		}
-		leds.SetFaderPosition(ch, target)
+	leds.SetFaderLED(ch, update.bound && update.synced)
+	if update.justDesynced {
+		leds.SetFaderPosition(ch, update.desyncFaderTarget)
 	}
 }
 
@@ -45,28 +34,21 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 	faderPos := float64(m.Value) / 127.0
 
 	d.mu.Lock()
-	c := &d.channels[m.Channel]
-	c.FaderPos = faderPos
-	if !c.Synced && math.Abs(faderPos-c.ActualVolume) < PickupThreshold {
-		c.Synced = true
-	}
-	synced, id, leds := c.Synced, c.StreamID, d.leds
-	if synced {
-		c.LastSetVol = faderPos
-	}
+	update := d.channels[m.Channel].moveFader(faderPos)
+	leds := d.leds
 	d.mu.Unlock()
 
 	if leds != nil {
-		leds.SetFaderLED(m.Channel, id != nil && synced)
+		leds.SetFaderLED(m.Channel, update.bound && update.synced)
 	}
 
-	if !synced {
+	if !update.synced {
 		return // fader has not yet picked up the actual volume
 	}
-	if id == nil {
+	if !update.bound {
 		return
 	}
-	if err := d.pw.SetVolume(ctx, *id, faderPos); err != nil {
-		log.Printf("fader ch%d: SetVolume(%d, %.3f): %v", m.Channel, *id, faderPos, err)
+	if err := d.pw.SetVolume(ctx, update.streamID, faderPos); err != nil {
+		log.Printf("fader ch%d: SetVolume(%d, %.3f): %v", m.Channel, update.streamID, faderPos, err)
 	}
 }
