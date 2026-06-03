@@ -147,6 +147,7 @@ func snapFromWire(w snapshotWire) [8]dispatcher.Channel {
 type initialPayload struct {
 	Snapshot snapshotWire             `json:"snapshot"`
 	Streams  []streams.EnrichedStream `json:"streams"`
+	Labels   [8]string                `json:"labels"`
 }
 
 // ── Command payloads (client → daemon) ───────────────────────────────────────

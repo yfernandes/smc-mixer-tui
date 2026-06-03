@@ -542,3 +542,34 @@ func TestUnbind(t *testing.T) {
 		t.Fatal("unbound after Unbind should not call SetVolume")
 	}
 }
+
+func TestUnbindSetsManuallyUnbound(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+	d.Unbind(0)
+
+	if !d.Snapshot()[0].ManuallyUnbound {
+		t.Fatal("Unbind should set ManuallyUnbound")
+	}
+}
+
+func TestBindClearsManuallyUnbound(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+	d.Unbind(0)
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+
+	if d.Snapshot()[0].ManuallyUnbound {
+		t.Fatal("Bind should clear ManuallyUnbound")
+	}
+}
+
+func TestEvictedChannelNotManuallyUnbound(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 42, "Firefox", audio.KindSource, "")
+	d.Bind(1, 42, "Firefox", audio.KindSource, "") // evicts ch 0
+
+	if d.Snapshot()[0].ManuallyUnbound {
+		t.Fatal("system eviction must not set ManuallyUnbound")
+	}
+}

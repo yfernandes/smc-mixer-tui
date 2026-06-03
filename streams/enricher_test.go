@@ -168,6 +168,37 @@ func TestEnrichPipeWireErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestEnrichHyprlandPipedTitleSplitsNameAndSubtitle(t *testing.T) {
+	e := &Enricher{
+		pw:    fakePW([]pipewire.Stream{{ID: 10, Name: "Chromium", PID: 100}}),
+		hypr:  fakeHypr([]hyprWindow{{PID: 100, Class: "chrome-music.youtube.com__-Default", Title: "Welcome to the Family | YouTube Music"}}),
+		mpris: noMPRIS,
+	}
+	ss, _ := e.Enrich(context.Background())
+	s := ss[0]
+	if s.Name != "YouTube Music" {
+		t.Errorf("Name = %q, want %q", s.Name, "YouTube Music")
+	}
+	if s.MediaName != "Welcome to the Family" {
+		t.Errorf("MediaName = %q, want %q", s.MediaName, "Welcome to the Family")
+	}
+	if s.BindKey != "chrome-music.youtube.com__-Default" {
+		t.Errorf("BindKey = %q, want class", s.BindKey)
+	}
+}
+
+func TestEnrichHyprlandTitleNoSeparatorUsesTitle(t *testing.T) {
+	e := &Enricher{
+		pw:    fakePW([]pipewire.Stream{{ID: 10, Name: "mpv", PID: 100}}),
+		hypr:  fakeHypr([]hyprWindow{{PID: 100, Class: "mpv", Title: "movie.mkv"}}),
+		mpris: noMPRIS,
+	}
+	ss, _ := e.Enrich(context.Background())
+	if ss[0].Name != "movie.mkv" || ss[0].MediaName != "" {
+		t.Errorf("unexpected: %+v", ss[0])
+	}
+}
+
 func TestEnrichBindKeyEqualName(t *testing.T) {
 	e := &Enricher{
 		pw:    fakePW([]pipewire.Stream{{ID: 5, Name: "discord", PID: 50}}),

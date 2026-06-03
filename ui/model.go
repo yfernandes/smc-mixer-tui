@@ -28,6 +28,7 @@ type Model struct {
 	disp Dispatcher
 
 	channels   [8]dispatcher.Channel
+	labels     [8]string
 	enriched   []streams.EnrichedStream
 	selected   int  // 0–7 focused channel strip
 	bindMode   bool // user is cycling streams to bind to selected channel
@@ -42,12 +43,14 @@ type Model struct {
 	deviceConnected bool
 }
 
-// New creates the initial Model. snap is the initial channel state and initial
-// is the initial enriched stream list (both provided by the daemon on connect).
-func New(disp Dispatcher, snap [8]dispatcher.Channel, initial []streams.EnrichedStream) Model {
+// New creates the initial Model. snap and labels are the initial channel state
+// and per-channel config labels; initial is the enriched stream list.
+// All are provided by the daemon on connect.
+func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream) Model {
 	return Model{
 		disp:            disp,
 		channels:        snap,
+		labels:          labels,
 		enriched:        sortedByKind(initial),
 		deviceConnected: true, // assume connected until told otherwise
 	}

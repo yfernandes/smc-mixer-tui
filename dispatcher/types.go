@@ -41,8 +41,9 @@ type MPRISCaller interface {
 
 // Channel holds the runtime state for one mixer channel strip.
 type Channel struct {
-	StreamID     *uint32        // nil if unbound
-	Name         string         // display name; "" if unbound
+	StreamID        *uint32        // nil if unbound
+	ManuallyUnbound bool           // user explicitly unbound this channel; suppresses config auto-rebind
+	Name            string         // display name; "" if unbound
 	Kind         audio.NodeKind // functional role; set on Bind
 	MPRISName    string         // MPRIS player name suffix; "" if not an MPRIS source
 	ActualVolume float64        // volume last reported by PipeWire; display only

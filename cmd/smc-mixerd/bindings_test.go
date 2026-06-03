@@ -174,6 +174,39 @@ func TestStreamMatcherInvalidRegexMatchesNothing(t *testing.T) {
 	}
 }
 
+func TestPlanBindingsSkipsManuallyUnboundChannels(t *testing.T) {
+	cfg := testConfig(config.BindPlayback, "spotify")
+	snap := [8]dispatcher.Channel{}
+	snap[0].ManuallyUnbound = true
+	ss := []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+	}
+
+	actions := planBindings(cfg, snap, ss)
+
+	if len(actions) != 0 {
+		t.Fatalf("manually unbound channel should not be auto-rebound, got %+v", actions)
+	}
+}
+
+func TestStreamMatcherMatchTitle(t *testing.T) {
+	cfg := &config.Config{
+		Channels: map[string]config.ChannelConfig{
+			"0": {Bind: config.BindConfig{Type: config.BindPlayback, MatchTitle: "YouTube Music"}},
+		},
+	}
+	ss := []streams.EnrichedStream{
+		{ID: 10, Name: "chrome-music.youtube.com__-Default", BindKey: "chrome-music.youtube.com__-Default", WinTitle: "YouTube Music", Kind: audio.KindSource},
+		{ID: 20, Name: "Chromium", BindKey: "chromium", WinTitle: "Chromium", Kind: audio.KindSource},
+	}
+
+	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+
+	if len(actions) != 1 || actions[0].id != 10 {
+		t.Fatalf("match-title should bind stream 10, got %+v", actions)
+	}
+}
+
 func testConfig(bindType config.BindType, match string) *config.Config {
 	return &config.Config{
 		Channels: map[string]config.ChannelConfig{

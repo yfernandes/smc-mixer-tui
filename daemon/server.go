@@ -18,19 +18,22 @@ import (
 // Server is the daemon-side IPC listener. It broadcasts state to all connected
 // TUI clients and dispatches bind/unbind commands back to the dispatcher.
 type Server struct {
-	disp *dispatcher.Dispatcher
+	disp   *dispatcher.Dispatcher
+	labels [8]string
 
 	mu      sync.RWMutex
 	clients map[*serverConn]struct{}
 
-	streamsMu      sync.RWMutex
+	streamsMu     sync.RWMutex
 	currentStreams []streams.EnrichedStream
 }
 
-// NewServer creates a Server backed by disp.
-func NewServer(disp *dispatcher.Dispatcher) *Server {
+// NewServer creates a Server backed by disp. labels are the per-channel config
+// labels sent to clients on connect so the TUI can show them for unbound strips.
+func NewServer(disp *dispatcher.Dispatcher, labels [8]string) *Server {
 	return &Server{
 		disp:    disp,
+		labels:  labels,
 		clients: make(map[*serverConn]struct{}),
 	}
 }
@@ -133,6 +136,7 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 	init := initialPayload{
 		Snapshot: snapToWire(s.disp.Snapshot()),
 		Streams:  currentStreams,
+		Labels:   s.labels,
 	}
 	if currentStreams == nil {
 		init.Streams = []streams.EnrichedStream{}

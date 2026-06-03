@@ -71,7 +71,7 @@ func (m Model) renderStrip(ch int) string {
 	right := lipgloss.NewStyle().Width(rightW)
 	row := func(l, r string) string { return left.Render(l) + right.Render(r) }
 
-	name := nameLabel(c, state)
+	name := nameLabel(c, state, m.labels[ch])
 	subtitle := subtitleLabel(es, state)
 	fRows := faderRows(c.ActualVolume, faderH, leftW)
 	volPct := pickupLabel(c)
@@ -120,9 +120,14 @@ func bindSubtitle(es streams.EnrichedStream) string {
 }
 
 // nameLabel returns the primary name for a strip given its state.
-func nameLabel(c dispatcher.Channel, state channelState) string {
+func nameLabel(c dispatcher.Channel, state channelState, label string) string {
 	switch state {
-	case stateBinding, stateUnbound:
+	case stateBinding:
+		return "---"
+	case stateUnbound:
+		if label != "" {
+			return label
+		}
 		return "---"
 	default:
 		return c.Name

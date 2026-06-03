@@ -13,14 +13,14 @@ defaults:
     type: gain
   playback-knob:
     type: crossfade
-    output-a: speakers
-    output-b: headphones
+    output-a: headphones
+    output-b: speakers
   output-knob:
     type: none
 
 channels:
   0:
-    label: Fifine
+    label: Fifine Mic
     bind:
       type: input
       match: "fifine Microphone Analog Stereo"
@@ -30,22 +30,22 @@ channels:
       type: playback
       match: spotify
   2:
+    label: Youtube Music
+    bind:
+      type: playback
+      match-title: "YouTube Music"
+  3:
     label: Firefox
     bind:
       type: playback
       match-regex: "firefox.*"
-    # Explicit crossfade override (same as playback default, shown for clarity)
-    knob:
-      type: crossfade
-      output-a: speakers
-      output-b: headphones
   6:
-    label: Headphones
-    bind:
-      type: output
-      match: headphones
-  7:
     label: Speakers
     bind:
       type: output
       match: speakers
+  7:
+    label: Headphones
+    bind:
+      type: output
+      match: headphones

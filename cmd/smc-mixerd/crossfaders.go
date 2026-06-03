@@ -53,11 +53,17 @@ func (m *crossfaderManager) syncChannel(ctx context.Context, ch int, channel dis
 	isCrossfade := ok && knob.IsCrossfade()
 	streamID := channel.StreamID
 
-	if m.active[ch] != nil && (!isCrossfade || streamID == nil || *streamID != m.active[ch].streamID) {
+	var sinksUp bool
+	if isCrossfade {
+		sinkA, sinkB, _, _ := resolveCrossfaderSinks(m.cfg, knob, ss)
+		sinksUp = sinkA != "" && sinkB != ""
+	}
+
+	if m.active[ch] != nil && (!isCrossfade || streamID == nil || *streamID != m.active[ch].streamID || !sinksUp) {
 		m.teardownChannel(ctx, ch)
 	}
 
-	if !isCrossfade || streamID == nil || m.active[ch] != nil {
+	if !isCrossfade || streamID == nil || m.active[ch] != nil || !sinksUp {
 		return
 	}
 

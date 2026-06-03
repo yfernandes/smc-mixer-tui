@@ -36,7 +36,7 @@ func (f *fakeDisp) Unbind(ch int) { f.unbinds = append(f.unbinds, ch) }
 // — helpers —
 
 func makeModel(d *fakeDisp, ss []streams.EnrichedStream) Model {
-	return New(d, d.snap, ss)
+	return New(d, d.snap, [8]string{}, ss)
 }
 
 // upd sends msg through Update and returns the new Model, discarding the Cmd.

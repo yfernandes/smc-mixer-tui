@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 )
 
 // queryHyprland calls "hyprctl clients -j" and returns the window list.
@@ -37,4 +40,41 @@ func parseHyprClients(data []byte) ([]hyprWindow, error) {
 		out = append(out, hyprWindow{PID: w.PID, Class: w.Class, Title: w.Title})
 	}
 	return out, nil
+}
+
+// hyprWindowForPID looks up a Hyprland window by exact PID match first, then
+// by walking up /proc ancestry. Apps like Chromium spawn separate audio
+// subprocesses whose PIDs differ from the window PID.
+func hyprWindowForPID(pid uint32, byPID map[uint32]hyprWindow) (hyprWindow, bool) {
+	const maxDepth = 10
+	cur := pid
+	for range maxDepth {
+		if w, ok := byPID[cur]; ok {
+			return w, true
+		}
+		parent := procParentPID(cur)
+		if parent <= 1 {
+			break
+		}
+		cur = parent
+	}
+	return hyprWindow{}, false
+}
+
+// procParentPID reads the PPid field from /proc/<pid>/status.
+func procParentPID(pid uint32) uint32 {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "PPid:") {
+			val := strings.TrimSpace(strings.TrimPrefix(line, "PPid:"))
+			n, err := strconv.ParseUint(val, 10, 32)
+			if err == nil {
+				return uint32(n)
+			}
+		}
+	}
+	return 0
 }

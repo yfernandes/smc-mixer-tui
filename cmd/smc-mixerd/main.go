@@ -44,7 +44,7 @@ func main() {
 
 	pw := pipewire.New()
 	enricher := streams.New(pw)
-	enricher.SetBlacklist([]string{"pavucontrol"})
+	enricher.SetBlacklist([]string{"pavucontrol", "smc_", "loopback-"})
 
 	initial, err := enricher.Enrich(ctx)
 	if err != nil {
@@ -60,7 +60,7 @@ func main() {
 	defer manageCrossfaders.Close(context.Background())
 	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
-	srv := daemon.NewServer(disp)
+	srv := daemon.NewServer(disp, configLabels(cfg))
 	srv.BroadcastStreams(initial)
 
 	go func() {

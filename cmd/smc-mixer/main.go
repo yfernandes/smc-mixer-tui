@@ -27,7 +27,7 @@ func main() {
 	defer cancel()
 
 	program := tea.NewProgram(
-		ui.New(client, state.Snapshot, state.Streams),
+		ui.New(client, state.Snapshot, state.Labels, state.Streams),
 		tea.WithAltScreen(),
 	)
 	client.SetProgram(program)

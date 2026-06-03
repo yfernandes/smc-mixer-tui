@@ -60,8 +60,9 @@ type ChannelConfig struct {
 // BindConfig describes how a channel finds its PipeWire stream.
 type BindConfig struct {
 	Type       BindType `yaml:"type"`                  // "input", "playback", or "output"
-	Match      string   `yaml:"match,omitempty"`       // case-insensitive substring
-	MatchRegex string   `yaml:"match-regex,omitempty"` // regex applied to stream name/BindKey
+	Match      string   `yaml:"match,omitempty"`       // case-insensitive substring on Name/BindKey
+	MatchRegex string   `yaml:"match-regex,omitempty"` // regex applied to stream Name/BindKey
+	MatchTitle string   `yaml:"match-title,omitempty"` // case-insensitive substring on window title
 }
 
 // BindType describes which kind of audio node a channel can bind to.

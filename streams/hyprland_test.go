@@ -39,3 +39,23 @@ func TestParseHyprClientsInvalidJSON(t *testing.T) {
 		t.Fatal("expected error for invalid JSON")
 	}
 }
+
+func TestHyprWindowForPIDDirectMatch(t *testing.T) {
+	byPID := map[uint32]hyprWindow{
+		100: {PID: 100, Class: "spotify", Title: "Spotify"},
+	}
+	w, ok := hyprWindowForPID(100, byPID)
+	if !ok || w.Class != "spotify" {
+		t.Fatalf("direct match failed: ok=%v w=%+v", ok, w)
+	}
+}
+
+func TestHyprWindowForPIDNoMatch(t *testing.T) {
+	byPID := map[uint32]hyprWindow{
+		100: {PID: 100, Class: "spotify"},
+	}
+	_, ok := hyprWindowForPID(1, byPID) // PID 1 has no ancestors to check
+	if ok {
+		t.Fatal("expected no match for unrelated PID")
+	}
+}

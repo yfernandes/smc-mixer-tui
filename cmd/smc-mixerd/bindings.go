@@ -11,10 +11,20 @@ import (
 )
 
 func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
+	clearStaleBindings(disp, ss)
 	for _, action := range planBindings(cfg, disp.Snapshot(), ss) {
 		disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
 	}
 	refreshBindingMetadata(disp, ss)
+}
+
+func clearStaleBindings(disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
+	snap := disp.Snapshot()
+	for ch, c := range snap {
+		if c.StreamID != nil && !c.ManuallyUnbound && !streamLive(*c.StreamID, ss) {
+			disp.LoseBinding(ch)
+		}
+	}
 }
 
 type bindingAction struct {
@@ -30,6 +40,9 @@ func planBindings(cfg *config.Config, snap [8]dispatcher.Channel, ss []streams.E
 	for ch := range 8 {
 		chCfg := cfg.ChannelFor(ch)
 		if chCfg == nil {
+			continue
+		}
+		if snap[ch].ManuallyUnbound {
 			continue
 		}
 		if channelBindingLive(snap[ch], ss) {
@@ -73,12 +86,16 @@ type streamMatcher struct {
 	wantKind     audio.NodeKind
 	hasWantKind  bool
 	resolvedName string
+	matchTitle   string
 	regexSet     bool
 	re           *regexp.Regexp
 }
 
 func newStreamMatcher(ch int, cfg *config.Config, bind config.BindConfig) streamMatcher {
-	m := streamMatcher{resolvedName: cfg.MatchStringFor(ch)}
+	m := streamMatcher{
+		resolvedName: cfg.MatchStringFor(ch),
+		matchTitle:   strings.ToLower(bind.MatchTitle),
+	}
 	if wantKind, ok := bind.AudioKind(); ok {
 		m.wantKind = wantKind
 		m.hasWantKind = true
@@ -102,12 +119,25 @@ func (m streamMatcher) matches(s streams.EnrichedStream) bool {
 		}
 		return m.re.MatchString(s.Name) || m.re.MatchString(s.BindKey)
 	}
+	if m.matchTitle != "" {
+		return strings.Contains(strings.ToLower(s.WinTitle), m.matchTitle)
+	}
 	if m.resolvedName != "" {
 		lower := strings.ToLower(m.resolvedName)
 		return strings.Contains(strings.ToLower(s.Name), lower) ||
 			strings.Contains(strings.ToLower(s.BindKey), lower)
 	}
 	return false
+}
+
+func configLabels(cfg *config.Config) [8]string {
+	var labels [8]string
+	for ch := range 8 {
+		if chCfg := cfg.ChannelFor(ch); chCfg != nil {
+			labels[ch] = chCfg.Label
+		}
+	}
+	return labels
 }
 
 func streamLive(id uint32, ss []streams.EnrichedStream) bool {

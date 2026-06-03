@@ -156,7 +156,7 @@ func enrichStreamIdentity(
 		Kind:      s.Kind,
 		MediaName: s.MediaName,
 	}
-	if w, ok := hyprByPID[s.PID]; ok {
+	if w, ok := hyprWindowForPID(s.PID, hyprByPID); ok {
 		applyHyprlandIdentity(&es, w)
 	}
 	if p, ok := mprisByPID[s.PID]; ok {
@@ -166,10 +166,19 @@ func enrichStreamIdentity(
 }
 
 func applyHyprlandIdentity(es *EnrichedStream, w hyprWindow) {
-	es.Name = w.Class
 	es.BindKey = w.Class
 	es.Source = SourceHyprland
 	es.WinTitle = w.Title
+
+	// Split "Track/Context | App Name" into subtitle and name.
+	if i := strings.Index(w.Title, " | "); i >= 0 {
+		es.MediaName = strings.TrimSpace(w.Title[:i])
+		es.Name = strings.TrimSpace(w.Title[i+3:])
+	} else if w.Title != "" {
+		es.Name = w.Title
+	} else {
+		es.Name = w.Class
+	}
 }
 
 func applyMPRISIdentity(es *EnrichedStream, p mprisPlayer) {

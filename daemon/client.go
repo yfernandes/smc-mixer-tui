@@ -33,6 +33,7 @@ type Client struct {
 type InitialState struct {
 	Snapshot [8]dispatcher.Channel
 	Streams  []streams.EnrichedStream
+	Labels   [8]string
 }
 
 // Connect dials the daemon socket and reads the initial state synchronously.
@@ -54,6 +55,7 @@ func Connect() (*Client, InitialState, error) {
 			if err := json.Unmarshal(env.Data, &p); err == nil {
 				state.Snapshot = snapFromWire(p.Snapshot)
 				state.Streams = p.Streams
+				state.Labels = p.Labels
 			}
 		}
 	}
