@@ -1,6 +1,9 @@
 package dispatcher
 
-import "github.com/yfernandes/smc-mixer-tui/audio"
+import (
+	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/midi"
+)
 
 // Bind assigns a PipeWire stream to a channel strip.
 // If the stream is already bound to a different channel, that channel is
@@ -55,11 +58,37 @@ func (d *Dispatcher) UpdateBindingMetadata(ch int, id uint32, name, mprisName st
 func (d *Dispatcher) LoseBinding(ch int) {
 	d.mu.Lock()
 	d.channels[ch].clearBinding()
+	d.channels[ch].Advanced = false
+	d.channels[ch].advancedSpec = nil
+	oldCancel := d.advancedCancels[ch]
+	d.advancedCancels[ch] = nil
+	d.blinkGen[ch]++
 	leds := d.leds
+	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
 	d.mu.Unlock()
+	if oldCancel != nil {
+		oldCancel()
+	}
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
+		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
+}
+
+// BindKnob sets the PipeWire node that this channel's knob controls for gain writes.
+// Used on the main page where knob and fader target independent devices.
+func (d *Dispatcher) BindKnob(ch int, id uint32) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	idCopy := id
+	d.channels[ch].KnobStreamID = &idCopy
+}
+
+// LoseKnob clears the knob's independent device binding.
+func (d *Dispatcher) LoseKnob(ch int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.channels[ch].KnobStreamID = nil
 }
 
 // Unbind removes the stream binding from a channel strip and suppresses
@@ -68,10 +97,20 @@ func (d *Dispatcher) Unbind(ch int) {
 	d.mu.Lock()
 	d.channels[ch].clearBinding()
 	d.channels[ch].ManuallyUnbound = true
+	d.channels[ch].Advanced = false
+	d.channels[ch].advancedSpec = nil
+	oldCancel := d.advancedCancels[ch]
+	d.advancedCancels[ch] = nil
+	d.blinkGen[ch]++
 	leds := d.leds
+	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
 	d.mu.Unlock()
 
+	if oldCancel != nil {
+		oldCancel()
+	}
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
+		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
 }

@@ -64,12 +64,11 @@ func (f *fakeLEDs) SetFaderPosition(ch int, vol float64) {
 func (f *fakeLEDs) SetGlobalLED(action midi.GlobalAction, on bool) {
 }
 
-// send drives a single message through a fresh Run call.
+// send drives a single message directly through the dispatcher's internal dispatch
+// path, bypassing Run. This lets tests issue many messages to the same dispatcher
+// without hitting Run's single-use enforcement.
 func send(d *Dispatcher, msg midi.Msg) {
-	ch := make(chan midi.Msg, 1)
-	ch <- msg
-	close(ch)
-	d.Run(context.Background(), ch)
+	d.dispatch(context.Background(), msg)
 }
 
 func approxEq(a, b float64) bool { return abs64(a-b) < 1e-9 }
@@ -118,7 +117,6 @@ func TestFaderNoCallBeforePickup(t *testing.T) {
 		t.Fatal("channel should not be synced when fader has not reached zero")
 	}
 }
-
 
 func TestFaderZeroAutoPickup(t *testing.T) {
 	pw := newFakePW()
@@ -255,7 +253,9 @@ func TestSoloToggle(t *testing.T) {
 
 func TestRecToggle(t *testing.T) {
 	d := New(newFakePW())
+	// R toggles on release; send press then immediate release (< 500ms = short press).
 	send(d, midi.ButtonMsg{Channel: 5, Kind: midi.ButtonRec, Pressed: true})
+	send(d, midi.ButtonMsg{Channel: 5, Kind: midi.ButtonRec, Pressed: false})
 	if !d.Snapshot()[5].Rec {
 		t.Fatal("expected Rec=true")
 	}
@@ -468,14 +468,56 @@ func TestCrossfaderKnobCenterBothFull(t *testing.T) {
 	}
 }
 
+func TestKnobGainCallsSetVolume(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.BindKnob(0, 55)
+
+	// Knob starts at 64; delta +63 → 127 → vol 1.0
+	for range 63 {
+		send(d, midi.KnobMsg{Channel: 0, Delta: +1})
+	}
+	if !approxEq(pw.volumes[55], 1.0) {
+		t.Fatalf("SetVolume[55] = %.4f, want 1.0", pw.volumes[55])
+	}
+}
+
+func TestKnobGainLoseKnobStopsWrites(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.BindKnob(0, 55)
+	d.LoseKnob(0)
+
+	send(d, midi.KnobMsg{Channel: 0, Delta: +1})
+	if _, called := pw.volumes[55]; called {
+		t.Fatal("LoseKnob should stop SetVolume calls")
+	}
+}
+
+func TestKnobGainDoesNotTouchCrossfaderWhenBothSet(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	ctrl := &fakeCrossfader{}
+	d.SetCrossfader(0, ctrl, "A", "B")
+	d.BindKnob(0, 55) // crossfader takes priority
+
+	send(d, midi.KnobMsg{Channel: 0, Delta: +1})
+	if _, called := pw.volumes[55]; called {
+		t.Fatal("crossfader must take priority over knob gain; SetVolume must not be called")
+	}
+	if ctrl.calls == 0 {
+		t.Fatal("crossfader SetGains should have been called")
+	}
+}
+
 func TestCrossfaderNoCallWithoutController(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 
-	// No crossfader configured — knob must not call SetVolume on PipeWire.
+	// No crossfader and no knob binding — knob must not call SetVolume on PipeWire.
 	send(d, midi.KnobMsg{Channel: 0, Delta: +10})
 	if len(pw.volumes) != 0 {
-		t.Fatal("knob without crossfader controller must not call SetVolume")
+		t.Fatal("knob without crossfader controller or knob binding must not call SetVolume")
 	}
 }
 
@@ -571,5 +613,27 @@ func TestEvictedChannelNotManuallyUnbound(t *testing.T) {
 
 	if d.Snapshot()[0].ManuallyUnbound {
 		t.Fatal("system eviction must not set ManuallyUnbound")
+	}
+}
+
+// TestAdvancedBlinkCancelStoredUnderLock verifies fix 3: the blink goroutine's
+// cancel func is stored in advancedCancels while the lock is still held, so a
+// concurrent OnGlobal page switch cannot miss the cancel and leave a ghost goroutine.
+func TestAdvancedBlinkCancelStoredUnderLock(t *testing.T) {
+	d := New(newFakePW())
+	d.Bind(0, 10, "App", audio.KindSource, "")
+	d.SetAdvancedSpec(0, &AdvancedSpec{MuteButtonAction: "mute"})
+
+	// Activate advanced mode (R short press on bound channel with advanced spec).
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonRec, Pressed: true})
+	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonRec, Pressed: false})
+
+	// Immediately switch page — this simulates the concurrent OnGlobal and must
+	// find the cancel func already stored (not nil), so the goroutine is cancelled.
+	d.OnGlobal(midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
+
+	// After page switch, Advanced must be false.
+	if d.Snapshot()[0].Advanced {
+		t.Fatal("Advanced should be false after page switch")
 	}
 }

@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/yfernandes/smc-mixer-tui/midi"
@@ -11,13 +12,14 @@ import (
 // By default PipeWire writes are synchronous (volDebounce == 0); call
 // SetVolDebounce before Run to enable debounced async writes.
 func New(pw PipeWire) *Dispatcher {
-	d := &Dispatcher{pw: pw}
+	d := &Dispatcher{pw: pw, activePage: "main"}
 	for i := range d.channels {
 		d.channels[i] = newChannel()
 	}
 	for i := range d.volWorkers {
 		d.volWorkers[i] = make(chan float64, 1)
 		d.crossWorkers[i] = make(chan crossGains, 1)
+		d.knobVolWorkers[i] = make(chan float64, 1)
 	}
 	return d
 }
@@ -43,16 +45,29 @@ func (d *Dispatcher) Snapshot() [8]Channel {
 	return d.channels
 }
 
+// SetPageChangeCallback sets a function called (outside the dispatcher lock) whenever
+// activePage changes via OnGlobal. Use to trigger immediate rebinding after a page switch.
+func (d *Dispatcher) SetPageChangeCallback(cb func()) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.pageChangeCallback = cb
+}
+
 // Run reads MIDI events from msgs until ctx is cancelled or msgs is closed.
-// If volDebounce > 0, per-channel PipeWire worker goroutines are started and
-// cancelled automatically when Run returns.
+// Run is single-use: a second call logs an error and returns immediately without
+// processing any messages. This avoids starting duplicate PipeWire worker goroutines.
 func (d *Dispatcher) Run(ctx context.Context, msgs <-chan midi.Msg) {
+	if !d.runStarted.CompareAndSwap(false, true) {
+		log.Print("dispatcher: Run called more than once; ignoring second call")
+		return
+	}
 	if d.volDebounce > 0 {
 		workerCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		for i := range d.volWorkers {
 			go d.runVolWorker(workerCtx, i)
 			go d.runCrossWorker(workerCtx, i)
+			go d.runKnobVolWorker(workerCtx, i)
 		}
 	}
 	for {
