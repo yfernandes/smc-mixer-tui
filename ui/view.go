@@ -94,7 +94,7 @@ func (m Model) renderStrip(ch int) string {
 		row("", ""),
 		row(fRows[0], renderBtn("M", c.Mute || c.SoloMuted, btnMuteOn)),
 		row(fRows[1], renderBtn("S", c.Solo, btnSoloOn)),
-		row(fRows[2], renderBtn("R", c.Rec, btnRecOn)),
+		row(fRows[2], renderBtn("R", c.Rec || m.ChannelAdvanced[ch], btnRecOn)),
 		row(fRows[3], renderBtn("■", c.Stop, btnStopOn)),
 		row(fRows[4], volPct),
 	}
@@ -202,21 +202,11 @@ func (m Model) renderBar() string {
 	if !m.deviceConnected {
 		return styleNoDevice.Render(" ⚠ no MIDI device — waiting for SMC…   q quit")
 	}
-
-	playInd := " ▶"
-	if m.playing {
-		playInd = stylePlay.Render(" ▶")
-	}
-	recInd := " ⏺"
-	if m.recording {
-		recInd = styleRec.Render(" ⏺")
-	}
 	return globalBarStyle.Render(fmt.Sprintf(
-		"%s%s   ⏮ ⏭   ←→ select   enter bind   u unbind   q quit",
-		playInd, recInd,
+		" page: %-12s   ←→ select   enter bind   u unbind   q quit",
+		m.ActivePage,
 	))
 }
-
 
 func selectStripStyle(selected bool, state channelState, kind audio.NodeKind) lipgloss.Style {
 	switch {

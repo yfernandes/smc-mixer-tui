@@ -63,7 +63,7 @@ func decodeEnvelope(frame []byte) (envelope, error) {
 // ── Push payloads (daemon → client) ──────────────────────────────────────────
 
 // channelWire is the JSON-safe form of dispatcher.Channel.
-// The unexported crossfader field is omitted; all exported fields are preserved.
+// Unexported fields (crossfader, advancedSpec) are omitted.
 type channelWire struct {
 	StreamID       *uint32        `json:"stream_id,omitempty"`
 	Name           string         `json:"name"`
@@ -79,6 +79,7 @@ type channelWire struct {
 	Solo           bool           `json:"solo"`
 	Rec            bool           `json:"rec"`
 	Stop           bool           `json:"stop"`
+	Advanced       bool           `json:"advanced"`
 	CrossSinkAName string         `json:"cross_sink_a_name"`
 	CrossSinkBName string         `json:"cross_sink_b_name"`
 }
@@ -99,6 +100,7 @@ func toWire(c dispatcher.Channel) channelWire {
 		Solo:           c.Solo,
 		Rec:            c.Rec,
 		Stop:           c.Stop,
+		Advanced:       c.Advanced,
 		CrossSinkAName: c.CrossSinkAName,
 		CrossSinkBName: c.CrossSinkBName,
 	}
@@ -120,6 +122,7 @@ func fromWire(w channelWire) dispatcher.Channel {
 		Solo:           w.Solo,
 		Rec:            w.Rec,
 		Stop:           w.Stop,
+		Advanced:       w.Advanced,
 		CrossSinkAName: w.CrossSinkAName,
 		CrossSinkBName: w.CrossSinkBName,
 	}

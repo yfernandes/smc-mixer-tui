@@ -210,46 +210,41 @@ func TestSnapshotMsgUpdatesChannels(t *testing.T) {
 	}
 }
 
-// — transport (GlobalMsg) —
+// — transport / page switching (GlobalMsg) —
 
-func TestPlaySetsPlaying(t *testing.T) {
+func TestPlaySwitchesToApplicationsPage(t *testing.T) {
 	m := makeModel(&fakeDisp{}, nil)
 	m = upd(m, midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
-	if !m.playing {
-		t.Fatal("expected playing=true after ActionPlay")
+	if m.ActivePage != "applications" {
+		t.Fatalf("ActivePage = %q, want applications", m.ActivePage)
 	}
 }
 
-func TestPauseTogglesPlaying(t *testing.T) {
+func TestPlayAgainReturnsToMain(t *testing.T) {
 	m := makeModel(&fakeDisp{}, nil)
 	m = upd(m, midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
-	m = upd(m, midi.GlobalMsg{Action: midi.ActionPause, Pressed: true})
-	if m.playing {
-		t.Fatal("Pause should stop playing")
-	}
-	m = upd(m, midi.GlobalMsg{Action: midi.ActionPause, Pressed: true})
-	if !m.playing {
-		t.Fatal("second Pause should restart playing (toggle)")
+	m = upd(m, midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
+	if m.ActivePage != "main" {
+		t.Fatalf("ActivePage = %q, want main after toggle", m.ActivePage)
 	}
 }
 
-func TestRecordToggles(t *testing.T) {
+func TestPageSwitchResetsChannelAdvanced(t *testing.T) {
 	m := makeModel(&fakeDisp{}, nil)
+	m.ChannelAdvanced[3] = true
 	m = upd(m, midi.GlobalMsg{Action: midi.ActionRecord, Pressed: true})
-	if !m.recording {
-		t.Fatal("expected recording=true")
-	}
-	m = upd(m, midi.GlobalMsg{Action: midi.ActionRecord, Pressed: true})
-	if m.recording {
-		t.Fatal("expected recording=false after second press")
+	for i, adv := range m.ChannelAdvanced {
+		if adv {
+			t.Fatalf("ChannelAdvanced[%d] should be reset on page switch", i)
+		}
 	}
 }
 
 func TestGlobalReleaseIgnored(t *testing.T) {
 	m := makeModel(&fakeDisp{}, nil)
 	m = upd(m, midi.GlobalMsg{Action: midi.ActionPlay, Pressed: false})
-	if m.playing {
-		t.Fatal("button release should not affect state")
+	if m.ActivePage != "main" {
+		t.Fatalf("button release should not change ActivePage, got %q", m.ActivePage)
 	}
 }
 

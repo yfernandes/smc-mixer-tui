@@ -38,8 +38,8 @@ type Model struct {
 	termW int // terminal width from WindowSizeMsg
 	termH int // terminal height from WindowSizeMsg
 
-	playing         bool
-	recording       bool
+	ActivePage      string  // current page name; "main" if none active
+	ChannelAdvanced [8]bool // advanced mode per strip; resets on page switch
 	deviceConnected bool
 }
 
@@ -53,6 +53,7 @@ func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial 
 		labels:          labels,
 		enriched:        sortedByKind(initial),
 		deviceConnected: true, // assume connected until told otherwise
+		ActivePage:      "main",
 	}
 }
 
@@ -89,6 +90,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
 		m.channels = [8]dispatcher.Channel(msg)
+		for ch := range 8 {
+			m.ChannelAdvanced[ch] = m.channels[ch].Advanced
+		}
 		return m, tickCmd(m.disp)
 	case streams.UpdateMsg:
 		m.enriched = sortedByKind([]streams.EnrichedStream(msg))
@@ -97,10 +101,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case midi.DeviceStatusMsg:
 		m.deviceConnected = msg.Connected
 	case midi.GlobalMsg:
-		return m.handleGlobal(msg), nil
+		return m.handleGlobal(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
-

@@ -55,9 +55,6 @@ var (
 	btnRecOn    = lipgloss.NewStyle().Background(colorHot).Foreground(colorFG).Bold(true)
 	btnStopOn   = lipgloss.NewStyle().Background(colorAccent).Foreground(colorFG).Bold(true)
 
-	stylePlay = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
-	styleRec  = lipgloss.NewStyle().Foreground(colorHot).Bold(true)
-
 	globalBarStyle = lipgloss.NewStyle().Foreground(colorDim)
 	bindBarStyle   = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	styleNoDevice  = lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
