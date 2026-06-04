@@ -34,9 +34,9 @@ func newCrossfaderManager(cfg *config.Config, pw *pipewire.Client, disp *dispatc
 	return &crossfaderManager{cfg: cfg, pw: pw, disp: disp}
 }
 
-func (m *crossfaderManager) Sync(ctx context.Context, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) {
+func (m *crossfaderManager) Sync(ctx context.Context, activePage string, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) {
 	for ch := range 8 {
-		m.syncChannel(ctx, ch, snap[ch], ss)
+		m.syncChannel(ctx, activePage, ch, snap[ch], ss)
 	}
 }
 
@@ -48,22 +48,22 @@ func (m *crossfaderManager) Close(ctx context.Context) {
 	}
 }
 
-func (m *crossfaderManager) syncChannel(ctx context.Context, ch int, channel dispatcher.Channel, ss []streams.EnrichedStream) {
-	knob, ok := m.cfg.KnobFor(ch)
-	isCrossfade := ok && knob.IsCrossfade()
+func (m *crossfaderManager) syncChannel(ctx context.Context, activePage string, ch int, channel dispatcher.Channel, ss []streams.EnrichedStream) {
+	knob, ok := m.cfg.KnobForPage(activePage, ch)
+	isSend := ok && knob.IsSend()
 	streamID := channel.StreamID
 
 	var sinksUp bool
-	if isCrossfade {
+	if isSend {
 		sinkA, sinkB, _, _ := resolveCrossfaderSinks(m.cfg, knob, ss)
 		sinksUp = sinkA != "" && sinkB != ""
 	}
 
-	if m.active[ch] != nil && (!isCrossfade || streamID == nil || *streamID != m.active[ch].streamID || !sinksUp) {
+	if m.active[ch] != nil && (!isSend || streamID == nil || *streamID != m.active[ch].streamID || !sinksUp) {
 		m.teardownChannel(ctx, ch)
 	}
 
-	if !isCrossfade || streamID == nil || m.active[ch] != nil || !sinksUp {
+	if !isSend || streamID == nil || m.active[ch] != nil || !sinksUp {
 		return
 	}
 
@@ -79,7 +79,7 @@ func (m *crossfaderManager) teardownChannel(ctx context.Context, ch int) {
 func (m *crossfaderManager) setupChannel(ctx context.Context, ch int, streamID uint32, knob config.KnobConfig, ss []streams.EnrichedStream) {
 	sinkANodeName, sinkBNodeName, nameA, nameB := resolveCrossfaderSinks(m.cfg, knob, ss)
 	if sinkANodeName == "" || sinkBNodeName == "" {
-		log.Printf("crossfader ch%d: sinks not found (A=%q B=%q)", ch, knob.OutputA, knob.OutputB)
+		log.Printf("crossfader ch%d: sinks not found (A=%q B=%q)", ch, knob.BusA, knob.BusB)
 		return
 	}
 
@@ -101,8 +101,8 @@ func (c *channelCrossfader) SetGains(ctx context.Context, volA, volB float64) er
 }
 
 func resolveCrossfaderSinks(cfg *config.Config, knob config.KnobConfig, ss []streams.EnrichedStream) (nodeA, nodeB, nameA, nameB string) {
-	descA := strings.ToLower(cfg.ResolveOutput(knob.OutputA))
-	descB := strings.ToLower(cfg.ResolveOutput(knob.OutputB))
+	descA := strings.ToLower(cfg.ResolveOutput(knob.BusA))
+	descB := strings.ToLower(cfg.ResolveOutput(knob.BusB))
 	for _, s := range ss {
 		if s.Kind != audio.KindSink {
 			continue
