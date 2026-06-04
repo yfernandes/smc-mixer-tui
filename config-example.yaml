@@ -1,51 +1,142 @@
 midi:
-  device: "" # auto-discovered; set to e.g. /dev/midi1 to pin a specific device
+  device: "" # auto-discovered
 
-# Named output devices. Use these aliases in channel bind.match and knob output-a/output-b.
-outputs:
-  speakers: "Ryzen HD Audio Controller Analog Stereo"
-  headphones: "WH-1000XM4"
-
-# Default knob behaviour per channel bind type.
-# Override per-channel with a 'knob' block on the channel itself.
 defaults:
   input-knob:
     type: gain
   playback-knob:
-    type: crossfade
-    output-a: headphones
-    output-b: speakers
+    type: send
+    bus-a: headphones
+    bus-b: speakers
   output-knob:
     type: none
 
-channels:
-  0:
-    label: Fifine Mic
-    bind:
-      type: input
-      match: "fifine Microphone Analog Stereo"
-  1:
-    label: Spotify
-    bind:
-      type: playback
-      match: spotify
-  2:
-    label: Youtube Music
-    bind:
-      type: playback
-      match-title: "YouTube Music"
-  3:
-    label: Firefox
-    bind:
-      type: playback
-      match-regex: "firefox.*"
-  6:
-    label: Speakers
-    bind:
-      type: output
-      match: speakers
-  7:
-    label: Headphones
-    bind:
-      type: output
-      match: headphones
+devices:
+  noise:
+    label: "White Noise"
+    type: playback
+    match: ~
+
+  spotify:
+    label: "Spotify"
+    type: playback
+    match: spotify
+
+  youtube-music:
+    label: "YouTube Music"
+    type: playback
+    match-title: "YouTube Music"
+
+  firefox:
+    label: "Firefox"
+    type: playback
+    match-regex: "firefox.*"
+
+  comms:
+    label: "Comms"
+    type: playback
+    match-regex: "discord|zoom|skype|teams"
+
+  fifine:
+    label: "Fifine Mic"
+    type: input
+    match: "fifine Microphone Analog Stereo"
+    knob:
+      type: gain
+    advanced:
+      fader:
+        type: effect
+        effect: reverb
+      knob:
+        type: effect
+        effect: echo
+      mute-button:
+        type: action
+        action: toggle-monitor
+      solo-button:
+        type: action
+        action: toggle-noise-cancel
+      stop-button:
+        type: action
+        action: reset-effects
+
+  speakers:
+    label: "Speakers"
+    type: output
+    match: "Ryzen HD Audio Controller Analog Stereo"
+
+  headphones:
+    label: "Headphones"
+    type: output
+    match: "WH-1000XM4"
+
+  master-out:
+    label: "Master"
+    type: output
+    match: ~
+
+pages:
+  main:
+    button: none
+    faders:
+      0: noise
+      1: spotify
+      2: youtube-music
+      3: firefox
+      4: comms
+      5: ~
+      6: ~
+      7: master-out
+    knobs:
+      0: fifine
+      1: ~
+      2: ~
+      3: ~
+      4: ~
+      5: ~
+      6: headphones
+      7: speakers
+
+  applications:
+    button: play
+    channels:
+      0: spotify
+      1: youtube-music
+      2: firefox
+      3: comms
+      4: ~
+      5: ~
+      6: ~
+      7: ~
+
+  inputs:
+    button: rec
+    channels:
+      0: fifine
+      1: ~
+      2: ~
+      3: ~
+      4: ~
+      5: ~
+      6: ~
+      7: ~
+
+  outputs:
+    button: pause
+    channels:
+      0: speakers
+      1: headphones
+      2: ~
+      3: ~
+      4: ~
+      5: ~
+      6: ~
+      7: ~
+
+  system:
+    button: prev
+    channels: {}
+
+  custom:
+    button: next
+    channels: {}
