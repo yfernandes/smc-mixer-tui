@@ -10,12 +10,68 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
-func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
+func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream, pinnedKeys map[int]string) {
 	clearStaleBindings(disp, ss)
-	for _, action := range planBindings(cfg, disp.Snapshot(), ss) {
-		disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
+	activePage := disp.ActivePage()
+	// Sync pinned flags before planning so planBindings can skip already-live pinned slots.
+	syncPinnedFlags(cfg, disp, activePage, pinnedKeys)
+	for _, action := range planBindings(cfg, activePage, disp.Snapshot(), ss) {
+		switch {
+		case action.lose:
+			disp.LoseBinding(action.ch)
+		case action.syncSpec:
+			// Stream already matched; only refresh config-derived metadata.
+			dev := cfg.ChannelForPage(activePage, action.ch)
+			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
+		default:
+			disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
+			dev := cfg.ChannelForPage(activePage, action.ch)
+			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
+		}
 	}
+	applyKnobBindings(cfg, disp, activePage, ss)
 	refreshBindingMetadata(disp, ss)
+}
+
+// syncPinnedFlags updates Channel.Pinned for all channels based on current page and pinnedKeys.
+// On main page: a slot is pinned if it appears in pinnedKeys.
+// On other pages: a slot is pinned if its device key matches the pinned key for that slot.
+func syncPinnedFlags(cfg *config.Config, disp *dispatcher.Dispatcher, activePage string, pinnedKeys map[int]string) {
+	for ch := range 8 {
+		pinnedKey, hasPinned := pinnedKeys[ch]
+		var isPinned bool
+		if hasPinned {
+			if activePage == "main" {
+				isPinned = true
+			} else {
+				isPinned = cfg.DeviceKeyForPage(activePage, ch) == pinnedKey
+			}
+		}
+		disp.SetPinned(ch, isPinned)
+	}
+}
+
+func advancedSpecFrom(dev *config.DeviceConfig) *dispatcher.AdvancedSpec {
+	if dev == nil || dev.Advanced == nil {
+		return nil
+	}
+	spec := &dispatcher.AdvancedSpec{}
+	if dev.Advanced.Fader != nil {
+		spec.FaderEffect = dev.Advanced.Fader.Effect
+	}
+	if dev.Advanced.Knob != nil {
+		spec.KnobEffect = dev.Advanced.Knob.Effect
+	}
+	if dev.Advanced.MuteButton != nil {
+		spec.MuteButtonAction = dev.Advanced.MuteButton.Action
+	}
+	if dev.Advanced.SoloButton != nil {
+		spec.SoloButtonAction = dev.Advanced.SoloButton.Action
+	}
+	if dev.Advanced.StopButton != nil {
+		spec.StopButtonAction = dev.Advanced.StopButton.Action
+	}
+	return spec
 }
 
 func clearStaleBindings(disp *dispatcher.Dispatcher, ss []streams.EnrichedStream) {
@@ -33,22 +89,40 @@ type bindingAction struct {
 	name      string
 	kind      audio.NodeKind
 	mprisName string
+	lose      bool // if true: lose binding only, all other fields ignored
+	syncSpec  bool // if true: sync advancedSpec for an unchanged live binding
 }
 
-func planBindings(cfg *config.Config, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) []bindingAction {
+func planBindings(cfg *config.Config, activePage string, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) []bindingAction {
 	var actions []bindingAction
 	for ch := range 8 {
-		chCfg := cfg.ChannelFor(ch)
-		if chCfg == nil {
+		// Pinned main-page slots with a live binding are immune to reassignment.
+		if activePage == "main" && snap[ch].Pinned && channelBindingLive(snap[ch], ss) {
 			continue
 		}
 		if snap[ch].ManuallyUnbound {
 			continue
 		}
-		if channelBindingLive(snap[ch], ss) {
+
+		dev := cfg.ChannelForPage(activePage, ch)
+		if dev == nil {
+			// No device configured for this slot on the current page: lose any live binding
+			// so it doesn't block other logic or remain stale across page switches.
+			if channelBindingLive(snap[ch], ss) {
+				actions = append(actions, bindingAction{ch: ch, lose: true})
+			}
 			continue
 		}
-		matcher := newStreamMatcher(ch, cfg, chCfg.Bind)
+
+		// Live binding already matches the configured device — no rebind, but refresh
+		// config-derived state (e.g. advancedSpec) in case the page switch changed the
+		// device behind the same stream.
+		if channelBindingMatchesConfig(snap[ch], dev, ss) {
+			actions = append(actions, bindingAction{ch: ch, syncSpec: true})
+			continue
+		}
+
+		matcher := newStreamMatcher(dev)
 		if s := bindingCandidate(matcher, ss); s != nil {
 			actions = append(actions, bindingAction{
 				ch:        ch,
@@ -57,9 +131,27 @@ func planBindings(cfg *config.Config, snap [8]dispatcher.Channel, ss []streams.E
 				kind:      s.Kind,
 				mprisName: mprisName(*s),
 			})
+		} else if channelBindingLive(snap[ch], ss) {
+			// Configured device has no matching stream, but a stale (non-matching) binding
+			// is live. Lose it so the slot is ready to rebind when the stream appears.
+			actions = append(actions, bindingAction{ch: ch, lose: true})
 		}
 	}
 	return actions
+}
+
+// channelBindingMatchesConfig reports whether ch's live binding is for a stream
+// that matches the device config. Used to avoid redundant rebinds on page switch.
+func channelBindingMatchesConfig(ch dispatcher.Channel, dev *config.DeviceConfig, ss []streams.EnrichedStream) bool {
+	if ch.StreamID == nil {
+		return false
+	}
+	for _, s := range ss {
+		if s.ID == *ch.StreamID {
+			return newStreamMatcher(dev).matches(s)
+		}
+	}
+	return false
 }
 
 func channelBindingLive(ch dispatcher.Channel, ss []streams.EnrichedStream) bool {
@@ -76,34 +168,44 @@ func bindingCandidate(matcher streamMatcher, ss []streams.EnrichedStream) *strea
 }
 
 func mprisName(s streams.EnrichedStream) string {
-	if s.Source == streams.SourceMPRIS {
-		return s.Name
-	}
-	return ""
+	return s.MPRISPlayer
 }
 
 type streamMatcher struct {
-	wantKind     audio.NodeKind
-	hasWantKind  bool
-	resolvedName string
-	matchTitle   string
-	regexSet     bool
-	re           *regexp.Regexp
+	wantKind    audio.NodeKind
+	hasWantKind bool
+	strategies  []func(streams.EnrichedStream) bool
 }
 
-func newStreamMatcher(ch int, cfg *config.Config, bind config.BindConfig) streamMatcher {
-	m := streamMatcher{
-		resolvedName: cfg.MatchStringFor(ch),
-		matchTitle:   strings.ToLower(bind.MatchTitle),
-	}
-	if wantKind, ok := bind.AudioKind(); ok {
+// newStreamMatcher builds a matcher for a device.
+// Strategies are mutually exclusive and applied in priority order: regex > match-title > substring.
+func newStreamMatcher(dev *config.DeviceConfig) streamMatcher {
+	m := streamMatcher{}
+	if wantKind, ok := dev.AudioKind(); ok {
 		m.wantKind = wantKind
 		m.hasWantKind = true
 	}
-	if bind.MatchRegex != "" {
-		m.regexSet = true
-		if re, err := regexp.Compile("(?i)" + bind.MatchRegex); err == nil {
-			m.re = re
+	switch {
+	case dev.MatchRegex != "":
+		if re, err := regexp.Compile("(?i)" + dev.MatchRegex); err == nil {
+			m.strategies = append(m.strategies, func(s streams.EnrichedStream) bool {
+				return re.MatchString(s.Name) || re.MatchString(s.BindKey)
+			})
+		} else {
+			m.strategies = append(m.strategies, func(streams.EnrichedStream) bool { return false })
+		}
+	case dev.MatchTitle != "":
+		title := strings.ToLower(dev.MatchTitle)
+		m.strategies = append(m.strategies, func(s streams.EnrichedStream) bool {
+			return strings.Contains(strings.ToLower(s.WinTitle), title)
+		})
+	default:
+		if dev.Match != "" {
+			lower := strings.ToLower(dev.Match)
+			m.strategies = append(m.strategies, func(s streams.EnrichedStream) bool {
+				return strings.Contains(strings.ToLower(s.Name), lower) ||
+					strings.Contains(strings.ToLower(s.BindKey), lower)
+			})
 		}
 	}
 	return m
@@ -113,28 +215,46 @@ func (m streamMatcher) matches(s streams.EnrichedStream) bool {
 	if m.hasWantKind && s.Kind != m.wantKind {
 		return false
 	}
-	if m.regexSet {
-		if m.re == nil {
-			return false
+	for _, fn := range m.strategies {
+		if fn(s) {
+			return true
 		}
-		return m.re.MatchString(s.Name) || m.re.MatchString(s.BindKey)
-	}
-	if m.matchTitle != "" {
-		return strings.Contains(strings.ToLower(s.WinTitle), m.matchTitle)
-	}
-	if m.resolvedName != "" {
-		lower := strings.ToLower(m.resolvedName)
-		return strings.Contains(strings.ToLower(s.Name), lower) ||
-			strings.Contains(strings.ToLower(s.BindKey), lower)
 	}
 	return false
+}
+
+// applyKnobBindings binds or clears the independent knob device for each channel.
+// Only the main page has independent knob slots; all other pages clear knob bindings.
+func applyKnobBindings(cfg *config.Config, disp *dispatcher.Dispatcher, activePage string, ss []streams.EnrichedStream) {
+	for ch := range 8 {
+		if activePage != "main" {
+			disp.LoseKnob(ch)
+			continue
+		}
+		knob, ok := cfg.KnobFor(ch)
+		if !ok || knob.Type != config.KnobGain {
+			disp.LoseKnob(ch)
+			continue
+		}
+		dev := cfg.KnobDeviceFor(ch)
+		if dev == nil {
+			disp.LoseKnob(ch)
+			continue
+		}
+		matcher := newStreamMatcher(dev)
+		if s := bindingCandidate(matcher, ss); s != nil {
+			disp.BindKnob(ch, s.ID)
+		} else {
+			disp.LoseKnob(ch)
+		}
+	}
 }
 
 func configLabels(cfg *config.Config) [8]string {
 	var labels [8]string
 	for ch := range 8 {
-		if chCfg := cfg.ChannelFor(ch); chCfg != nil {
-			labels[ch] = chCfg.Label
+		if dev := cfg.ChannelFor(ch); dev != nil {
+			labels[ch] = dev.Label
 		}
 	}
 	return labels

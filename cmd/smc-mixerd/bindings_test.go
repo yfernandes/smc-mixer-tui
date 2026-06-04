@@ -10,6 +10,19 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
+func sp(s string) *string { return &s }
+
+func testConfig(bindType config.BindType, match string) *config.Config {
+	return &config.Config{
+		Devices: map[string]config.DeviceConfig{
+			"dev0": {Type: bindType, Match: match},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{0: sp("dev0")}},
+		},
+	}
+}
+
 func TestPlanBindingsMatchesConfiguredPlayback(t *testing.T) {
 	cfg := testConfig(config.BindPlayback, "spotify")
 	ss := []streams.EnrichedStream{
@@ -17,7 +30,7 @@ func TestPlanBindingsMatchesConfiguredPlayback(t *testing.T) {
 		stream(20, "Spotify", "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 1 {
 		t.Fatalf("actions = %d, want 1", len(actions))
@@ -27,21 +40,23 @@ func TestPlanBindingsMatchesConfiguredPlayback(t *testing.T) {
 	}
 }
 
-func TestPlanBindingsResolvesOutputAliases(t *testing.T) {
+func TestPlanBindingsResolvesOutputMatch(t *testing.T) {
 	cfg := &config.Config{
-		Outputs: map[string]string{"speakers": "Ryzen HD Audio"},
-		Channels: map[string]config.ChannelConfig{
-			"0": {Bind: config.BindConfig{Type: config.BindOutput, Match: "speakers"}},
+		Devices: map[string]config.DeviceConfig{
+			"speakers": {Type: config.BindOutput, Match: "Ryzen HD Audio"},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{0: sp("speakers")}},
 		},
 	}
 	ss := []streams.EnrichedStream{
 		stream(30, "Ryzen HD Audio Analog Stereo", "alsa_output", audio.KindSink),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 1 || actions[0].id != 30 {
-		t.Fatalf("expected output alias to bind sink 30, got %+v", actions)
+		t.Fatalf("expected output device to bind sink 30, got %+v", actions)
 	}
 }
 
@@ -54,10 +69,14 @@ func TestPlanBindingsLeavesLiveBindingsAlone(t *testing.T) {
 		stream(20, "Spotify", "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, snap, ss)
+	actions := planBindings(cfg, "main", snap, ss)
 
-	if len(actions) != 0 {
-		t.Fatalf("live binding should not be rebound, got %+v", actions)
+	// A syncSpec action is allowed (it refreshes config-derived metadata without rebinding).
+	// No lose or actual bind actions should be emitted for a correctly-live binding.
+	for _, a := range actions {
+		if !a.syncSpec {
+			t.Fatalf("live matching binding should only emit syncSpec actions, got %+v", actions)
+		}
 	}
 }
 
@@ -67,14 +86,14 @@ func TestApplyBindingsRefreshesMPRISForLiveBinding(t *testing.T) {
 
 	applyBindings(cfg, disp, []streams.EnrichedStream{
 		stream(20, "Spotify", "spotify", audio.KindSource),
-	})
+	}, nil)
 	if got := disp.Snapshot()[0].MPRISName; got != "" {
 		t.Fatalf("initial MPRISName = %q, want empty", got)
 	}
 
 	applyBindings(cfg, disp, []streams.EnrichedStream{
 		mprisStream(20, "spotify", audio.KindSource),
-	})
+	}, nil)
 
 	if got := disp.Snapshot()[0].MPRISName; got != "spotify" {
 		t.Fatalf("refreshed MPRISName = %q, want spotify", got)
@@ -90,7 +109,7 @@ func TestPlanBindingsRebindsDeadBinding(t *testing.T) {
 		stream(21, "Spotify", "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, snap, ss)
+	actions := planBindings(cfg, "main", snap, ss)
 
 	if len(actions) != 1 || actions[0].id != 21 {
 		t.Fatalf("dead binding should be rebound to stream 21, got %+v", actions)
@@ -103,7 +122,7 @@ func TestPlanBindingsCapturesMPRISName(t *testing.T) {
 		mprisStream(20, "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 1 || actions[0].mprisName != "spotify" {
 		t.Fatalf("expected MPRIS name spotify, got %+v", actions)
@@ -116,7 +135,7 @@ func TestStreamMatcherFiltersWrongKind(t *testing.T) {
 		stream(20, "Spotify Microphone", "spotify", audio.KindMic),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 0 {
 		t.Fatalf("wrong stream kind should not match, got %+v", actions)
@@ -125,15 +144,18 @@ func TestStreamMatcherFiltersWrongKind(t *testing.T) {
 
 func TestStreamMatcherRegexChecksNameAndBindKey(t *testing.T) {
 	cfg := &config.Config{
-		Channels: map[string]config.ChannelConfig{
-			"0": {Bind: config.BindConfig{Type: config.BindPlayback, MatchRegex: "firefox.*"}},
+		Devices: map[string]config.DeviceConfig{
+			"dev0": {Type: config.BindPlayback, MatchRegex: "firefox.*"},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{0: sp("dev0")}},
 		},
 	}
 	ss := []streams.EnrichedStream{
 		stream(20, "Browser", "firefox.instance_1", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 1 || actions[0].id != 20 {
 		t.Fatalf("regex should match BindKey, got %+v", actions)
@@ -142,15 +164,18 @@ func TestStreamMatcherRegexChecksNameAndBindKey(t *testing.T) {
 
 func TestStreamMatcherRegexTakesPrecedenceOverMatch(t *testing.T) {
 	cfg := &config.Config{
-		Channels: map[string]config.ChannelConfig{
-			"0": {Bind: config.BindConfig{Type: config.BindPlayback, Match: "spotify", MatchRegex: "firefox"}},
+		Devices: map[string]config.DeviceConfig{
+			"dev0": {Type: config.BindPlayback, Match: "spotify", MatchRegex: "firefox"},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{0: sp("dev0")}},
 		},
 	}
 	ss := []streams.EnrichedStream{
 		stream(20, "Spotify", "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 0 {
 		t.Fatalf("regex should take precedence over substring match, got %+v", actions)
@@ -159,15 +184,18 @@ func TestStreamMatcherRegexTakesPrecedenceOverMatch(t *testing.T) {
 
 func TestStreamMatcherInvalidRegexMatchesNothing(t *testing.T) {
 	cfg := &config.Config{
-		Channels: map[string]config.ChannelConfig{
-			"0": {Bind: config.BindConfig{Type: config.BindPlayback, Match: "spotify", MatchRegex: "["}},
+		Devices: map[string]config.DeviceConfig{
+			"dev0": {Type: config.BindPlayback, Match: "spotify", MatchRegex: "["},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{0: sp("dev0")}},
 		},
 	}
 	ss := []streams.EnrichedStream{
 		stream(20, "Spotify", "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 0 {
 		t.Fatalf("invalid regex should match nothing, got %+v", actions)
@@ -182,7 +210,7 @@ func TestPlanBindingsSkipsManuallyUnboundChannels(t *testing.T) {
 		stream(20, "Spotify", "spotify", audio.KindSource),
 	}
 
-	actions := planBindings(cfg, snap, ss)
+	actions := planBindings(cfg, "main", snap, ss)
 
 	if len(actions) != 0 {
 		t.Fatalf("manually unbound channel should not be auto-rebound, got %+v", actions)
@@ -191,8 +219,11 @@ func TestPlanBindingsSkipsManuallyUnboundChannels(t *testing.T) {
 
 func TestStreamMatcherMatchTitle(t *testing.T) {
 	cfg := &config.Config{
-		Channels: map[string]config.ChannelConfig{
-			"0": {Bind: config.BindConfig{Type: config.BindPlayback, MatchTitle: "YouTube Music"}},
+		Devices: map[string]config.DeviceConfig{
+			"dev0": {Type: config.BindPlayback, MatchTitle: "YouTube Music"},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{0: sp("dev0")}},
 		},
 	}
 	ss := []streams.EnrichedStream{
@@ -200,18 +231,10 @@ func TestStreamMatcherMatchTitle(t *testing.T) {
 		{ID: 20, Name: "Chromium", BindKey: "chromium", WinTitle: "Chromium", Kind: audio.KindSource},
 	}
 
-	actions := planBindings(cfg, [8]dispatcher.Channel{}, ss)
+	actions := planBindings(cfg, "main", [8]dispatcher.Channel{}, ss)
 
 	if len(actions) != 1 || actions[0].id != 10 {
 		t.Fatalf("match-title should bind stream 10, got %+v", actions)
-	}
-}
-
-func testConfig(bindType config.BindType, match string) *config.Config {
-	return &config.Config{
-		Channels: map[string]config.ChannelConfig{
-			"0": {Bind: config.BindConfig{Type: bindType, Match: match}},
-		},
 	}
 }
 
@@ -227,6 +250,7 @@ func stream(id uint32, name, bindKey string, kind audio.NodeKind) streams.Enrich
 func mprisStream(id uint32, name string, kind audio.NodeKind) streams.EnrichedStream {
 	s := stream(id, name, name, kind)
 	s.Source = streams.SourceMPRIS
+	s.MPRISPlayer = name
 	return s
 }
 

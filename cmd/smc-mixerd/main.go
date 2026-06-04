@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,6 +34,9 @@ func main() {
 	if err != nil {
 		die("load config: %v", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		die("invalid config: %v", err)
+	}
 
 	fixedDevice := *deviceFlag
 	if fixedDevice == "" {
@@ -51,14 +55,26 @@ func main() {
 		die("initial stream discovery: %v", err)
 	}
 
+	pinned := newPinnedState(pinnedStatePath())
+	pinned.load(cfg)
+
 	disp := dispatcher.New(pw)
 	disp.SetVolDebounce(200 * time.Millisecond)
 	disp.SetMPRISCaller(streams.NewController())
-	applyBindings(cfg, disp, initial)
+	disp.SetPinCallback(func(ch int) {
+		page := disp.ActivePage()
+		key := cfg.DeviceKeyForPage(page, ch)
+		if key == "" {
+			return
+		}
+		nowPinned := pinned.toggle(cfg, ch, key)
+		disp.SetPinned(ch, nowPinned)
+	})
+	applyBindings(cfg, disp, initial, pinned.snapshot())
 
 	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
 	defer manageCrossfaders.Close(context.Background())
-	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
+	manageCrossfaders.Sync(ctx, disp.ActivePage(), disp.Snapshot(), initial)
 
 	srv := daemon.NewServer(disp, configLabels(cfg))
 	srv.BroadcastStreams(initial)
@@ -72,11 +88,21 @@ func main() {
 	midiCh := make(chan midi.Msg, 256)
 	dispCh := make(chan midi.Msg, 256)
 
+	// rebindCh is written by OnGlobal (via page change callback) and consumed
+	// by pollStreams to trigger an immediate applyBindings after a page switch.
+	rebindCh := make(chan struct{}, 1)
+	disp.SetPageChangeCallback(func() {
+		select {
+		case rebindCh <- struct{}{}:
+		default:
+		}
+	})
+
 	go routeMIDI(midiCh, dispCh, srv, disp)
 	go disp.Run(ctx, dispCh)
 	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, midiCh)
 	go runVolumePoller(ctx, pw, disp, srv)
-	go pollStreams(ctx, enricher, cfg, disp, srv, manageCrossfaders.Sync)
+	go pollStreams(ctx, enricher, cfg, disp, srv, pinned, manageCrossfaders.Sync, rebindCh)
 
 	<-ctx.Done()
 }
@@ -200,12 +226,42 @@ func pollStreams(
 	cfg *config.Config,
 	disp *dispatcher.Dispatcher,
 	srv *daemon.Server,
-	manageCrossfaders func(context.Context, [8]dispatcher.Channel, []streams.EnrichedStream),
+	pinned *pinnedState,
+	manageCrossfaders func(context.Context, string, [8]dispatcher.Channel, []streams.EnrichedStream),
+	rebindCh <-chan struct{},
 ) {
+	var (
+		lastMu sync.Mutex
+		lastSS []streams.EnrichedStream
+	)
+
+	// Listen for immediate-rebind triggers from page switches.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-rebindCh:
+				lastMu.Lock()
+				ss := lastSS
+				lastMu.Unlock()
+				if ss == nil {
+					continue
+				}
+				applyBindings(cfg, disp, ss, pinned.snapshot())
+				manageCrossfaders(ctx, disp.ActivePage(), disp.Snapshot(), ss)
+				srv.BroadcastSnapshot(disp.Snapshot())
+			}
+		}
+	}()
+
 	enricher.Poll(ctx, 2*time.Second, func(msg streams.UpdateMsg) {
 		ss := []streams.EnrichedStream(msg)
-		applyBindings(cfg, disp, ss)
-		manageCrossfaders(ctx, disp.Snapshot(), ss)
+		lastMu.Lock()
+		lastSS = ss
+		lastMu.Unlock()
+		applyBindings(cfg, disp, ss, pinned.snapshot())
+		manageCrossfaders(ctx, disp.ActivePage(), disp.Snapshot(), ss)
 		srv.BroadcastStreams(ss)
 		srv.BroadcastSnapshot(disp.Snapshot())
 	})
