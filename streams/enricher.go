@@ -20,17 +20,18 @@ const (
 
 // EnrichedStream is a live PipeWire audio node with the best available identity.
 type EnrichedStream struct {
-	ID        uint32 // PipeWire node ID
-	PID       uint32 // OS process ID; 0 if unavailable
-	Name      string // best display name
-	NodeName  string // PipeWire node.name (stable, used for pactl sink addressing)
-	BindKey   string // stable key for config matching (MPRIS name or app.name)
-	Source    Source
-	Kind      audio.NodeKind // functional role: source app, microphone, or output sink
-	Track     string         // MPRIS: current track title
-	Artist    string         // MPRIS: first listed artist
-	WinTitle  string         // Hyprland: window title of the owning process
-	MediaName string         // PipeWire: media.name (e.g. YouTube video title)
+	ID          uint32 // PipeWire node ID
+	PID         uint32 // OS process ID; 0 if unavailable
+	Name        string // best display name
+	NodeName    string // PipeWire node.name (stable, used for pactl sink addressing)
+	BindKey     string // stable key for config matching (MPRIS name or app.name)
+	Source      Source
+	Kind        audio.NodeKind // functional role: source app, microphone, or output sink
+	MPRISPlayer string         // MPRIS player name (suffix after "org.mpris.MediaPlayer2.")
+	Track       string         // MPRIS: current track title
+	Artist      string         // MPRIS: first listed artist
+	WinTitle    string         // Hyprland: window title of the owning process
+	MediaName   string         // PipeWire: media.name (e.g. YouTube video title)
 }
 
 // UpdateMsg is a tea-compatible message carrying a refreshed stream list.
@@ -141,6 +142,30 @@ func mprisPlayersByPID(players []mprisPlayer) map[uint32]mprisPlayer {
 	return byPID
 }
 
+// mprisPlayerForPID looks up an MPRIS player by exact PID match first, then
+// by walking up /proc ancestry. Returns (player, found, direct) where direct
+// is true only for an exact PID match. Browsers like Chromium register MPRIS
+// from the main process but spawn a separate audio utility subprocess for
+// PipeWire, so the audio PID differs from the MPRIS owner PID.
+func mprisPlayerForPID(pid uint32, byPID map[uint32]mprisPlayer) (mprisPlayer, bool, bool) {
+	if p, ok := byPID[pid]; ok {
+		return p, true, true
+	}
+	const maxDepth = 10
+	cur := pid
+	for range maxDepth {
+		parent := procParentPID(cur)
+		if parent <= 1 {
+			break
+		}
+		cur = parent
+		if p, ok := byPID[cur]; ok {
+			return p, true, false
+		}
+	}
+	return mprisPlayer{}, false, false
+}
+
 func enrichStreamIdentity(
 	s pipewire.Stream,
 	hyprByPID map[uint32]hyprWindow,
@@ -159,8 +184,8 @@ func enrichStreamIdentity(
 	if w, ok := hyprWindowForPID(s.PID, hyprByPID); ok {
 		applyHyprlandIdentity(&es, w)
 	}
-	if p, ok := mprisByPID[s.PID]; ok {
-		applyMPRISIdentity(&es, p)
+	if p, found, direct := mprisPlayerForPID(s.PID, mprisByPID); found {
+		applyMPRISIdentity(&es, p, direct)
 	}
 	return es
 }
@@ -181,12 +206,22 @@ func applyHyprlandIdentity(es *EnrichedStream, w hyprWindow) {
 	}
 }
 
-func applyMPRISIdentity(es *EnrichedStream, p mprisPlayer) {
-	es.Name = p.Name
-	es.BindKey = p.Name
-	es.Source = SourceMPRIS
+// applyMPRISIdentity enriches es with MPRIS metadata.
+// When direct is true (PID matched the MPRIS owner exactly), the MPRIS player
+// name becomes the authoritative display identity — e.g. "firefox.instance_1"
+// lets the config match "firefox.*". When direct is false (ancestry match,
+// e.g. Chromium's audio subprocess → browser process), only the control name
+// and track metadata are set; the Hyprland-derived display identity is kept so
+// existing config rules continue to match.
+func applyMPRISIdentity(es *EnrichedStream, p mprisPlayer, direct bool) {
+	es.MPRISPlayer = p.Name
 	es.Track = p.Track
 	es.Artist = p.Artist
+	if direct {
+		es.Name = p.Name
+		es.BindKey = p.Name
+		es.Source = SourceMPRIS
+	}
 }
 
 // Poll calls Enrich every interval, invoking send with each result.

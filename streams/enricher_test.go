@@ -3,6 +3,7 @@ package streams
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/yfernandes/smc-mixer-tui/pipewire"
@@ -59,7 +60,7 @@ func TestEnrichHyprlandOverridesPipeWire(t *testing.T) {
 	}
 }
 
-func TestEnrichMPRISOverridesHyprland(t *testing.T) {
+func TestEnrichMPRISDirectOverridesHyprland(t *testing.T) {
 	e := &Enricher{
 		pw:    fakePW([]pipewire.Stream{{ID: 10, Name: "mpv", PID: 100}}),
 		hypr:  fakeHypr([]hyprWindow{{PID: 100, Class: "mpv-class"}}),
@@ -67,8 +68,12 @@ func TestEnrichMPRISOverridesHyprland(t *testing.T) {
 	}
 	ss, _ := e.Enrich(context.Background())
 	s := ss[0]
+	// Direct match: MPRIS name wins for display identity
 	if s.Name != "mpv-player" || s.Source != SourceMPRIS || s.Track != "Song" || s.Artist != "Band" {
-		t.Errorf("MPRIS should be top priority: %+v", s)
+		t.Errorf("direct MPRIS match should override Hyprland identity: %+v", s)
+	}
+	if s.MPRISPlayer != "mpv-player" {
+		t.Errorf("MPRISPlayer = %q, want mpv-player", s.MPRISPlayer)
 	}
 }
 
@@ -196,6 +201,46 @@ func TestEnrichHyprlandTitleNoSeparatorUsesTitle(t *testing.T) {
 	ss, _ := e.Enrich(context.Background())
 	if ss[0].Name != "movie.mkv" || ss[0].MediaName != "" {
 		t.Errorf("unexpected: %+v", ss[0])
+	}
+}
+
+// TestEnrichMPRISAncestorMatch verifies that a PipeWire stream owned by a
+// child process is matched to the MPRIS player registered by its parent.
+// This is the Chromium case: the main browser process (MPRIS owner) spawns
+// a utility audio subprocess (PW stream), so the PIDs differ by one level.
+// Crucially, an ancestry match must NOT override the display identity —
+// only MPRISPlayer and track metadata are set, so config rules that matched
+// the Hyprland-derived name (e.g. "YouTube Music") continue to work.
+func TestEnrichMPRISAncestorMatch(t *testing.T) {
+	ppid := uint32(os.Getppid())
+	e := &Enricher{
+		pw:   fakePW([]pipewire.Stream{{ID: 10, Name: "Chromium", PID: uint32(os.Getpid())}}),
+		hypr: noHypr,
+		mpris: fakeMPRIS([]mprisPlayer{
+			{Name: "chromium.instance1296365", PID: ppid, Track: "Hey There Delilah", Artist: "Plain White T's"},
+		}),
+	}
+	ss, err := e.Enrich(context.Background())
+	if err != nil || len(ss) != 1 {
+		t.Fatalf("err=%v len=%d", err, len(ss))
+	}
+	s := ss[0]
+	// Ancestry match: display identity is preserved (Name stays as PipeWire gave it)
+	if s.Source != SourcePipeWire {
+		t.Errorf("Source = %v, want SourcePipeWire (ancestry match must not override)", s.Source)
+	}
+	if s.Name != "Chromium" {
+		t.Errorf("Name = %q, want original PW name (ancestry match must not override)", s.Name)
+	}
+	// But MPRIS control name and track metadata must be populated
+	if s.MPRISPlayer != "chromium.instance1296365" {
+		t.Errorf("MPRISPlayer = %q, want chromium instance name", s.MPRISPlayer)
+	}
+	if s.Track != "Hey There Delilah" {
+		t.Errorf("Track = %q, want track title", s.Track)
+	}
+	if s.Artist != "Plain White T's" {
+		t.Errorf("Artist = %q, want artist", s.Artist)
 	}
 }
 
