@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
@@ -44,18 +45,25 @@ type Channel struct {
 	StreamID        *uint32        // nil if unbound
 	ManuallyUnbound bool           // user explicitly unbound this channel; suppresses config auto-rebind
 	Name            string         // display name; "" if unbound
-	Kind         audio.NodeKind // functional role; set on Bind
-	MPRISName    string         // MPRIS player name suffix; "" if not an MPRIS source
-	ActualVolume float64        // volume last reported by PipeWire; display only
-	FaderPos     float64        // physical hardware fader position, 0.0–1.0
-	LastSetVol   float64        // last volume we sent to PipeWire; -1 = never
-	Synced       bool           // fader has passed through zero and now controls PipeWire
-	Knob         int            // 0–127, accumulated relative position; starts at 64
-	Mute         bool           // user-set mute
-	SoloMuted    bool           // muted as a side-effect of another same-kind channel being soloed
-	Solo         bool
-	Rec          bool
-	Stop         bool
+	Kind            audio.NodeKind // functional role; set on Bind
+	MPRISName       string         // MPRIS player name suffix; "" if not an MPRIS source
+	ActualVolume    float64        // volume last reported by PipeWire; display only
+	FaderPos        float64        // physical hardware fader position, 0.0–1.0
+	LastSetVol      float64        // last volume we sent to PipeWire; -1 = never
+	Synced          bool           // fader has passed through zero and now controls PipeWire
+	Knob            int            // 0–127, accumulated relative position; starts at 64
+	Mute            bool           // user-set mute
+	SoloMuted       bool           // muted as a side-effect of another same-kind channel being soloed
+	Solo            bool
+	Rec             bool
+	Stop            bool
+	Advanced        bool // advanced mode is active; R LED blinks, controls remapped
+	Pinned          bool // channel is pinned to the main page; R LED solid on
+
+	// KnobStreamID is the PipeWire node ID that this channel's knob controls for
+	// gain writes (main page independent knob slots). nil means knob is either a
+	// crossfader or unassigned.
+	KnobStreamID *uint32
 
 	// Crossfader: when set, the knob routes audio between two output sinks.
 	// Knob 0 = only SinkA, knob 127 = only SinkB, knob 64 = both at full.
@@ -63,6 +71,10 @@ type Channel struct {
 	crossfader     CrossfaderController
 	CrossSinkAName string // display name for SinkA
 	CrossSinkBName string // display name for SinkB
+
+	// advancedSpec is set by the daemon when the bound device has an [advanced]
+	// block; nil means this channel does not support advanced mode.
+	advancedSpec *AdvancedSpec
 }
 
 // globalLEDActions lists the transport actions that have LEDs, in index order.
@@ -76,17 +88,33 @@ var globalLEDActions = [5]midi.GlobalAction{
 
 // Dispatcher maps MIDI events to PipeWire actions and maintains channel state.
 type Dispatcher struct {
-	pw         PipeWire
-	leds       LEDWriter   // nil when no device is connected
-	mpris      MPRISCaller // nil when MPRIS unavailable
-	channels   [8]Channel
-	globalLEDs [5]bool // toggle state for transport buttons, indexed by globalLEDActions
-	lastStopAt [8]time.Time
-	mu         sync.RWMutex
+	pw                 PipeWire
+	leds               LEDWriter   // nil when no device is connected
+	mpris              MPRISCaller // nil when MPRIS unavailable
+	channels           [8]Channel
+	globalLEDs         [5]bool // LED state for page buttons, indexed by globalLEDActions
+	activePage         string  // current page name; "main" means no page button is lit
+	lastStopAt         [8]time.Time
+	rPressedAt         [8]time.Time
+	pinCallback        func(ch int)
+	pageChangeCallback func() // called outside the lock when activePage changes
+	mu                 sync.RWMutex
+
+	// advancedCancels holds the cancel function for each channel's blink goroutine.
+	// nil means no blink goroutine is running for that channel.
+	advancedCancels [8]context.CancelFunc
+
+	// blinkGen is incremented each time a blink goroutine is started for a channel.
+	// The goroutine captures its generation at start and exits without writing LEDs
+	// if the generation has changed, preventing stale goroutines from clobbering LED state.
+	blinkGen [8]uint32
 
 	// Async PipeWire write workers. Each channel has a size-1 latest-value buffer.
 	// When volDebounce == 0 (default / tests), writes are synchronous and workers are unused.
-	volDebounce  time.Duration
-	volWorkers   [8]chan float64
-	crossWorkers [8]chan crossGains
+	// Run is single-use: calling it a second time logs an error and returns immediately.
+	volDebounce    time.Duration
+	volWorkers     [8]chan float64
+	crossWorkers   [8]chan crossGains
+	knobVolWorkers [8]chan float64
+	runStarted     atomic.Bool // CAS from false→true on first Run; second call logs and returns
 }
