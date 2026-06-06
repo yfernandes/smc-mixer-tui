@@ -28,24 +28,11 @@ func NewListener(device string) *Listener {
 // loop begins. This prevents stale button presses (e.g. Play/Pause pressed
 // while the daemon was down) from being replayed as if they just happened.
 func (l *Listener) Run(ctx context.Context, out chan<- Msg) error {
-	f, err := os.OpenFile(l.device, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	drainALSAInput(l.device)
+
+	f, err := os.Open(l.device)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", l.device, err)
-	}
-
-	// Drain stale input. Read and discard until the non-blocking file returns
-	// an error (EAGAIN when empty, or any other I/O error).
-	drain := make([]byte, 64)
-	for {
-		if _, err := f.Read(drain); err != nil {
-			break
-		}
-	}
-
-	// Switch to blocking mode for the normal read loop.
-	if err := syscall.SetNonblock(int(f.Fd()), false); err != nil {
-		f.Close()
-		return fmt.Errorf("setnonblock %s: %w", l.device, err)
 	}
 
 	stop := make(chan struct{})
@@ -64,4 +51,22 @@ func (l *Listener) Run(ctx context.Context, out chan<- Msg) error {
 		return ctx.Err()
 	}
 	return err
+}
+
+// drainALSAInput discards any bytes already in the ALSA kernel receive buffer.
+// It uses raw syscalls so Go's runtime poller does not intercept EAGAIN and
+// turn it into a goroutine park — that would hang forever on an empty buffer.
+func drainALSAInput(device string) {
+	fd, err := syscall.Open(device, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return // best-effort; proceed without draining if the open fails
+	}
+	defer syscall.Close(fd)
+	var buf [64]byte
+	for {
+		n, err := syscall.Read(fd, buf[:])
+		if n <= 0 || err != nil {
+			return
+		}
+	}
 }
