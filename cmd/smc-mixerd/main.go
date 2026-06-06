@@ -153,6 +153,7 @@ func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Serv
 
 		if w != nil {
 			disp.SetLEDWriter(nil)
+			w.ClearLEDs()
 			w.Close()
 		}
 

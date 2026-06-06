@@ -21,6 +21,20 @@ func OpenWriter(path string) (*Writer, error) {
 	return &Writer{f: f}, nil
 }
 
+// ClearLEDs turns off all button LEDs, fader LEDs, and global transport LEDs.
+// Call before closing to leave the hardware in a clean state.
+func (w *Writer) ClearLEDs() {
+	for ch := range 8 {
+		for _, kind := range []ButtonKind{ButtonRec, ButtonSolo, ButtonMute, ButtonStop} {
+			w.SetButtonLED(ch, kind, false)
+		}
+		w.SetFaderLED(ch, false)
+	}
+	for _, action := range []GlobalAction{ActionPrevious, ActionNext, ActionPause, ActionPlay, ActionRecord} {
+		w.SetGlobalLED(action, false)
+	}
+}
+
 // Close closes the underlying device file.
 func (w *Writer) Close() error {
 	return w.f.Close()
