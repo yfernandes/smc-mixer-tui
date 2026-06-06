@@ -33,8 +33,43 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 	if leds != nil {
 		for _, i := range evicted {
 			leds.SetFaderLED(i, false)
+			leds.SetButtonLED(i, midi.ButtonStop, false)
 		}
 		leds.SetFaderLED(ch, false) // off until fader reaches zero
+		leds.SetButtonLED(ch, midi.ButtonStop, false)
+	}
+}
+
+// UserBind assigns a PipeWire stream to a channel strip in response to an explicit
+// user action. Behaves like Bind but sets UserBound=true so planBindings will not
+// override this slot with a config-driven stream while the stream is live.
+func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
+	d.mu.Lock()
+	var evicted []int
+	for i := range d.channels {
+		if i != ch && d.channels[i].boundTo(id) {
+			d.channels[i].clearBinding()
+			evicted = append(evicted, i)
+		}
+	}
+	d.channels[ch].ManuallyUnbound = false
+	d.channels[ch].bind(streamBinding{
+		id:        id,
+		name:      name,
+		kind:      kind,
+		mprisName: mprisName,
+	})
+	d.channels[ch].UserBound = true
+	leds := d.leds
+	d.mu.Unlock()
+
+	if leds != nil {
+		for _, i := range evicted {
+			leds.SetFaderLED(i, false)
+			leds.SetButtonLED(i, midi.ButtonStop, false)
+		}
+		leds.SetFaderLED(ch, false)
+		leds.SetButtonLED(ch, midi.ButtonStop, false)
 	}
 }
 
@@ -71,6 +106,7 @@ func (d *Dispatcher) LoseBinding(ch int) {
 	}
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
+		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
 }
@@ -111,6 +147,7 @@ func (d *Dispatcher) Unbind(ch int) {
 	}
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
+		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
 }

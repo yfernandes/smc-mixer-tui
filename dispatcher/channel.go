@@ -34,6 +34,8 @@ func (c *Channel) bind(b streamBinding) {
 	c.ActualVolume = 0
 	c.LastSetVol = -1
 	c.Synced = false
+	c.Stop = false
+	c.UserBound = false
 }
 
 func (c *Channel) clearBinding() {
@@ -43,6 +45,8 @@ func (c *Channel) clearBinding() {
 	c.Synced = false
 	c.ActualVolume = 0
 	c.LastSetVol = -1
+	c.Stop = false
+	c.UserBound = false
 }
 
 func (c Channel) boundID() (uint32, bool) {

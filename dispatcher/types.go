@@ -44,6 +44,7 @@ type MPRISCaller interface {
 type Channel struct {
 	StreamID        *uint32        // nil if unbound
 	ManuallyUnbound bool           // user explicitly unbound this channel; suppresses config auto-rebind
+	UserBound       bool           // user explicitly bound this channel; suppresses config rebind while stream is live
 	Name            string         // display name; "" if unbound
 	Kind            audio.NodeKind // functional role; set on Bind
 	MPRISName       string         // MPRIS player name suffix; "" if not an MPRIS source
