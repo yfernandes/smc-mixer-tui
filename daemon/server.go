@@ -165,7 +165,7 @@ func (s *Server) handleCmd(ctx context.Context, env envelope) {
 			log.Printf("daemon: bind decode: %v", err)
 			return
 		}
-		s.disp.Bind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName)
+		s.disp.UserBind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName)
 		s.BroadcastSnapshot(s.disp.Snapshot())
 
 	case kindUnbind:

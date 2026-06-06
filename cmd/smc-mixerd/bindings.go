@@ -122,6 +122,12 @@ func planBindings(cfg *config.Config, activePage string, snap [8]dispatcher.Chan
 			continue
 		}
 
+		// User explicitly bound this slot to a stream that differs from config.
+		// Respect the override; don't rebind from config while the stream is live.
+		if snap[ch].UserBound && channelBindingLive(snap[ch], ss) {
+			continue
+		}
+
 		matcher := newStreamMatcher(dev)
 		if s := bindingCandidate(matcher, ss); s != nil {
 			actions = append(actions, bindingAction{
