@@ -111,6 +111,16 @@ func (c *Client) Unbind(ch int) {
 	c.send(kindUnbind, unbindPayload{Ch: ch})
 }
 
+// ToggleMute forwards a mute toggle command to the daemon. Implements ui.Dispatcher.
+func (c *Client) ToggleMute(ch int) {
+	c.send(kindMute, muteTogglePayload{Ch: ch})
+}
+
+// ToggleSolo forwards a solo toggle command to the daemon. Implements ui.Dispatcher.
+func (c *Client) ToggleSolo(ch int) {
+	c.send(kindSolo, soloTogglePayload{Ch: ch})
+}
+
 func (c *Client) send(kind msgKind, v any) {
 	frame, err := encodeFrame(kind, v)
 	if err != nil {

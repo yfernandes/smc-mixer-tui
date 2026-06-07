@@ -94,3 +94,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, msg midi.Msg) {
 	}
 	// midi.GlobalMsg — transport, not handled here
 }
+
+// ToggleMute simulates a mute button press on channel ch.
+func (d *Dispatcher) ToggleMute(ch int) {
+	d.onButton(context.Background(), midi.ButtonMsg{Channel: ch, Kind: midi.ButtonMute, Pressed: true})
+}
+
+// ToggleSolo simulates a solo button press on channel ch.
+func (d *Dispatcher) ToggleSolo(ch int) {
+	d.onButton(context.Background(), midi.ButtonMsg{Channel: ch, Kind: midi.ButtonSolo, Pressed: true})
+}

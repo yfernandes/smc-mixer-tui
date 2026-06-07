@@ -176,6 +176,24 @@ func (s *Server) handleCmd(ctx context.Context, env envelope) {
 		}
 		s.disp.Unbind(p.Ch)
 		s.BroadcastSnapshot(s.disp.Snapshot())
+
+	case kindMute:
+		var p muteTogglePayload
+		if err := json.Unmarshal(env.Data, &p); err != nil {
+			log.Printf("daemon: mute decode: %v", err)
+			return
+		}
+		s.disp.ToggleMute(p.Ch)
+		s.BroadcastSnapshot(s.disp.Snapshot())
+
+	case kindSolo:
+		var p soloTogglePayload
+		if err := json.Unmarshal(env.Data, &p); err != nil {
+			log.Printf("daemon: solo decode: %v", err)
+			return
+		}
+		s.disp.ToggleSolo(p.Ch)
+		s.BroadcastSnapshot(s.disp.Snapshot())
 	}
 }
 

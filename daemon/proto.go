@@ -31,6 +31,8 @@ const (
 	kindGlobal   msgKind = "global"   // daemon → client: transport button press
 	kindBind     msgKind = "bind"     // client → daemon: bind stream to channel
 	kindUnbind   msgKind = "unbind"   // client → daemon: unbind channel
+	kindMute     msgKind = "mute"     // client → daemon: toggle mute on channel
+	kindSolo     msgKind = "solo"     // client → daemon: toggle solo on channel
 )
 
 // envelope is the newline-delimited wire format.
@@ -80,6 +82,7 @@ type channelWire struct {
 	Rec            bool           `json:"rec"`
 	Stop           bool           `json:"stop"`
 	Advanced       bool           `json:"advanced"`
+	UserBound      bool           `json:"user_bound"`
 	CrossSinkAName string         `json:"cross_sink_a_name"`
 	CrossSinkBName string         `json:"cross_sink_b_name"`
 }
@@ -101,6 +104,7 @@ func toWire(c dispatcher.Channel) channelWire {
 		Rec:            c.Rec,
 		Stop:           c.Stop,
 		Advanced:       c.Advanced,
+		UserBound:      c.UserBound,
 		CrossSinkAName: c.CrossSinkAName,
 		CrossSinkBName: c.CrossSinkBName,
 	}
@@ -123,6 +127,7 @@ func fromWire(w channelWire) dispatcher.Channel {
 		Rec:            w.Rec,
 		Stop:           w.Stop,
 		Advanced:       w.Advanced,
+		UserBound:      w.UserBound,
 		CrossSinkAName: w.CrossSinkAName,
 		CrossSinkBName: w.CrossSinkBName,
 	}
@@ -164,5 +169,13 @@ type bindPayload struct {
 }
 
 type unbindPayload struct {
+	Ch int `json:"ch"`
+}
+
+type muteTogglePayload struct {
+	Ch int `json:"ch"`
+}
+
+type soloTogglePayload struct {
 	Ch int `json:"ch"`
 }
