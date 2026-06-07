@@ -62,48 +62,6 @@ func main() {
 	cancel()
 }
 
-// computeStripConfigs derives per-channel split info from the main page config.
-// A strip is split when its fader and knob slots reference different device keys.
-func computeStripConfigs(cfg *config.Config) [8]ui.StripConfig {
-	var cfgs [8]ui.StripConfig
-	if cfg.Pages == nil {
-		return cfgs
-	}
-	mainPage, ok := cfg.Pages["main"]
-	if !ok {
-		return cfgs
-	}
-	for i := range 8 {
-		faderKey := ""
-		if k := mainPage.Faders[i]; k != nil {
-			faderKey = *k
-		}
-		knobKey := ""
-		if k := mainPage.Knobs[i]; k != nil {
-			knobKey = *k
-		}
-		// Split whenever knob has a config device and the fader is either unset (dynamic)
-		// or targets a different device. Same-device channels stay unified.
-		if knobKey == "" || faderKey == knobKey {
-			continue
-		}
-		cfgs[i].IsSplit = true
-		if dev := cfg.DeviceFor(knobKey); dev != nil {
-			cfgs[i].KnobLabel = dev.Label
-			cfgs[i].KnobType = string(dev.Type)
-		}
-		// FaderLabel/FaderType are only set when the fader has a static config device.
-		// An empty FaderType signals a dynamic fader whose zone uses runtime stream data.
-		if faderKey != "" {
-			if dev := cfg.DeviceFor(faderKey); dev != nil {
-				cfgs[i].FaderLabel = dev.Label
-				cfgs[i].FaderType = string(dev.Type)
-			}
-		}
-	}
-	return cfgs
-}
-
 func resolveConfigPath(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
