@@ -16,7 +16,19 @@ type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
 	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string)
 	Unbind(ch int)
+	ToggleMute(ch int)
+	ToggleSolo(ch int)
 }
+
+// navSetting identifies which per-channel parameter is focused for MIDI navigation.
+type navSetting int
+
+const (
+	navStream      navSetting = iota // cycle through bound streams
+	navMute                          // toggle mute
+	navSolo                          // toggle solo
+	navSettingCount navSetting = iota
+)
 
 // snapshotMsg carries a fresh dispatcher snapshot from the background tick.
 type snapshotMsg [8]dispatcher.Channel
@@ -38,9 +50,11 @@ type Model struct {
 	termW int // terminal width from WindowSizeMsg
 	termH int // terminal height from WindowSizeMsg
 
-	ActivePage      string  // current page name; "main" if none active
-	ChannelAdvanced [8]bool // advanced mode per strip; resets on page switch
+	ActivePage      string     // current page name; "main" if none active
+	ChannelAdvanced [8]bool    // advanced mode per strip; resets on page switch
 	deviceConnected bool
+	navSetting      navSetting // currently focused per-channel setting for MIDI nav
+	navStreamOpen   bool       // stream-list panel is visible; set on ◀/▶, cleared on context change
 }
 
 // New creates the initial Model. snap and labels are the initial channel state
@@ -64,6 +78,53 @@ func sortedByKind(ss []streams.EnrichedStream) []streams.EnrichedStream {
 	slices.SortStableFunc(out, func(a, b streams.EnrichedStream) int {
 		return int(a.Kind) - int(b.Kind)
 	})
+	return out
+}
+
+// pageKindFilter returns the NodeKind that the active page restricts to, and
+// whether such a restriction is in effect. Pages without a kind restriction
+// (e.g. "main") return false.
+func (m Model) pageKindFilter() (audio.NodeKind, bool) {
+	switch m.ActivePage {
+	case "applications":
+		return audio.KindSource, true
+	case "outputs":
+		return audio.KindSink, true
+	case "inputs":
+		return audio.KindMic, true
+	}
+	return 0, false
+}
+
+// availableStreams returns m.enriched filtered by two rules:
+//  1. Streams user-bound to another channel are excluded.
+//  2. On page-specific views (applications/outputs/inputs) only the matching
+//     NodeKind is shown.
+func (m Model) availableStreams() []streams.EnrichedStream {
+	blocked := map[uint32]bool{}
+	for ch, c := range m.channels {
+		if ch == m.selected {
+			continue
+		}
+		if c.UserBound && c.StreamID != nil {
+			blocked[*c.StreamID] = true
+		}
+	}
+	kindOnly, hasKind := m.pageKindFilter()
+
+	if len(blocked) == 0 && !hasKind {
+		return m.enriched
+	}
+	out := make([]streams.EnrichedStream, 0, len(m.enriched))
+	for _, s := range m.enriched {
+		if blocked[s.ID] {
+			continue
+		}
+		if hasKind && s.Kind != kindOnly {
+			continue
+		}
+		out = append(out, s)
+	}
 	return out
 }
 

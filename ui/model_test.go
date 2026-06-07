@@ -31,7 +31,9 @@ func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
 func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
 	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName})
 }
-func (f *fakeDisp) Unbind(ch int) { f.unbinds = append(f.unbinds, ch) }
+func (f *fakeDisp) Unbind(ch int)    { f.unbinds = append(f.unbinds, ch) }
+func (f *fakeDisp) ToggleMute(ch int) {}
+func (f *fakeDisp) ToggleSolo(ch int) {}
 
 // — helpers —
 
@@ -245,6 +247,215 @@ func TestGlobalReleaseIgnored(t *testing.T) {
 	m = upd(m, midi.GlobalMsg{Action: midi.ActionPlay, Pressed: false})
 	if m.ActivePage != "main" {
 		t.Fatalf("button release should not change ActivePage, got %q", m.ActivePage)
+	}
+}
+
+// — MIDI navigation (global nav buttons) —
+
+func gMsg(action midi.GlobalAction) midi.GlobalMsg {
+	return midi.GlobalMsg{Action: action, Pressed: true}
+}
+
+func TestSeekForwardSelectsNextChannel(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m = upd(m, gMsg(midi.ActionSeekForward))
+	if m.selected != 1 {
+		t.Fatalf("selected = %d, want 1", m.selected)
+	}
+}
+
+func TestSeekBackWrapsChannel(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m = upd(m, gMsg(midi.ActionSeekBack))
+	if m.selected != 7 {
+		t.Fatalf("selected = %d, want 7 (wrap)", m.selected)
+	}
+}
+
+func TestUpDownCycleNavSetting(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	if m.navSetting != navStream {
+		t.Fatalf("initial navSetting = %v, want navStream", m.navSetting)
+	}
+	m = upd(m, gMsg(midi.ActionDown))
+	if m.navSetting != navMute {
+		t.Fatalf("navSetting = %v after Down, want navMute", m.navSetting)
+	}
+	m = upd(m, gMsg(midi.ActionDown))
+	if m.navSetting != navSolo {
+		t.Fatalf("navSetting = %v after Down, want navSolo", m.navSetting)
+	}
+	m = upd(m, gMsg(midi.ActionDown)) // wraps
+	if m.navSetting != navStream {
+		t.Fatalf("navSetting = %v after wrap Down, want navStream", m.navSetting)
+	}
+	m = upd(m, gMsg(midi.ActionUp)) // wraps back
+	if m.navSetting != navSolo {
+		t.Fatalf("navSetting = %v after Up wrap, want navSolo", m.navSetting)
+	}
+}
+
+func TestMidiRightOnStreamBindsNext(t *testing.T) {
+	ss := []streams.EnrichedStream{{ID: 10, Name: "A"}, {ID: 20, Name: "B"}, {ID: 30, Name: "C"}}
+	disp := &fakeDisp{}
+	m := makeModel(disp, ss)
+	// no stream bound yet → right binds first
+	m = upd(m, gMsg(midi.ActionRight))
+	if len(disp.binds) != 1 || disp.binds[0].id != 10 {
+		t.Fatalf("expected Bind(id=10), got %v", disp.binds)
+	}
+}
+
+func TestMidiRightCyclesFromBoundStream(t *testing.T) {
+	id := uint32(20)
+	ss := []streams.EnrichedStream{{ID: 10, Name: "A"}, {ID: 20, Name: "B"}, {ID: 30, Name: "C"}}
+	disp := &fakeDisp{}
+	disp.snap[0].StreamID = &id
+	m := makeModel(disp, ss)
+	m = upd(m, gMsg(midi.ActionRight)) // B → C
+	if len(disp.binds) != 1 || disp.binds[0].id != 30 {
+		t.Fatalf("expected Bind(id=30), got %v", disp.binds)
+	}
+}
+
+// — navStreamOpen lifecycle —
+
+func TestCycleOpensNavStreamPanel(t *testing.T) {
+	ss := []streams.EnrichedStream{{ID: 1, Name: "A"}}
+	m := makeModel(&fakeDisp{}, ss)
+	if m.navStreamOpen {
+		t.Fatal("navStreamOpen should be false on init")
+	}
+	m = upd(m, gMsg(midi.ActionRight)) // cycle stream → opens panel
+	if !m.navStreamOpen {
+		t.Fatal("navStreamOpen should be true after cycling stream")
+	}
+}
+
+func TestNavSettingChangeClosesPanel(t *testing.T) {
+	ss := []streams.EnrichedStream{{ID: 1, Name: "A"}}
+	m := makeModel(&fakeDisp{}, ss)
+	m = upd(m, gMsg(midi.ActionRight)) // open panel
+	m = upd(m, gMsg(midi.ActionDown))  // change navSetting → closes panel
+	if m.navStreamOpen {
+		t.Fatal("navStreamOpen should close on navSetting change")
+	}
+}
+
+func TestChannelChangeClosesPanel(t *testing.T) {
+	ss := []streams.EnrichedStream{{ID: 1, Name: "A"}}
+	m := makeModel(&fakeDisp{}, ss)
+	m = upd(m, gMsg(midi.ActionRight))      // open panel
+	m = upd(m, gMsg(midi.ActionSeekForward)) // change channel → closes panel
+	if m.navStreamOpen {
+		t.Fatal("navStreamOpen should close on channel change")
+	}
+}
+
+func TestPageSwitchClosesPanel(t *testing.T) {
+	ss := []streams.EnrichedStream{{ID: 1, Name: "A"}}
+	m := makeModel(&fakeDisp{}, ss)
+	m = upd(m, gMsg(midi.ActionRight)) // open panel
+	m = upd(m, gMsg(midi.ActionPlay))  // switch page → closes panel
+	if m.navStreamOpen {
+		t.Fatal("navStreamOpen should close on page switch")
+	}
+}
+
+func TestMuteCycleDoesNotOpenPanel(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m = upd(m, gMsg(midi.ActionDown))  // navSetting → mute
+	m = upd(m, gMsg(midi.ActionRight)) // apply mute (not stream cycle)
+	if m.navStreamOpen {
+		t.Fatal("navStreamOpen should not open when navSetting is mute")
+	}
+}
+
+func TestPageFilterRestrictsAvailableStreams(t *testing.T) {
+	ss := []streams.EnrichedStream{
+		{ID: 1, Name: "Firefox", Kind: audio.KindSource},
+		{ID: 2, Name: "Mic", Kind: audio.KindMic},
+		{ID: 3, Name: "Speakers", Kind: audio.KindSink},
+	}
+	m := makeModel(&fakeDisp{}, ss)
+
+	// applications page → sources only
+	m.ActivePage = "applications"
+	avail := m.availableStreams()
+	if len(avail) != 1 || avail[0].ID != 1 {
+		t.Fatalf("applications page: want [Firefox], got %v", avail)
+	}
+
+	// outputs page → sinks only
+	m.ActivePage = "outputs"
+	avail = m.availableStreams()
+	if len(avail) != 1 || avail[0].ID != 3 {
+		t.Fatalf("outputs page: want [Speakers], got %v", avail)
+	}
+
+	// inputs page → mics only
+	m.ActivePage = "inputs"
+	avail = m.availableStreams()
+	if len(avail) != 1 || avail[0].ID != 2 {
+		t.Fatalf("inputs page: want [Mic], got %v", avail)
+	}
+
+	// main page → all streams
+	m.ActivePage = "main"
+	avail = m.availableStreams()
+	if len(avail) != 3 {
+		t.Fatalf("main page: want all 3 streams, got %d", len(avail))
+	}
+}
+
+func TestUserBoundStreamExcludedFromCycle(t *testing.T) {
+	id20 := uint32(20)
+	ss := []streams.EnrichedStream{{ID: 10, Name: "A"}, {ID: 20, Name: "B"}, {ID: 30, Name: "C"}}
+	disp := &fakeDisp{}
+	// ch1 has stream 20 user-bound; ch0 is selected (default)
+	disp.snap[1].StreamID = &id20
+	disp.snap[1].UserBound = true
+	m := makeModel(disp, ss)
+	// cycling from ch0 (no binding) should skip stream 20
+	m = upd(m, gMsg(midi.ActionRight)) // first available: A (id=10)
+	if len(disp.binds) != 1 || disp.binds[0].id != 10 {
+		t.Fatalf("expected Bind(id=10), got %v", disp.binds)
+	}
+	// update channels so ch0 is now bound to 10
+	id10 := uint32(10)
+	m.channels[0].StreamID = &id10
+	disp.binds = nil
+	m = upd(m, gMsg(midi.ActionRight)) // next after 10: C (id=30, skipping 20)
+	if len(disp.binds) != 1 || disp.binds[0].id != 30 {
+		t.Fatalf("expected Bind(id=30) skipping user-bound 20, got %v", disp.binds)
+	}
+}
+
+func TestUserBoundStreamExcludedFromBindPanel(t *testing.T) {
+	id20 := uint32(20)
+	ss := []streams.EnrichedStream{{ID: 10, Name: "A"}, {ID: 20, Name: "B"}, {ID: 30, Name: "C"}}
+	disp := &fakeDisp{}
+	disp.snap[1].StreamID = &id20
+	disp.snap[1].UserBound = true
+	m := makeModel(disp, ss)
+	m = upd(m, kEnter()) // enter bind mode on ch0
+	avail := m.availableStreams()
+	if len(avail) != 2 {
+		t.Fatalf("expected 2 available streams (B excluded), got %d: %v", len(avail), avail)
+	}
+	for _, s := range avail {
+		if s.ID == 20 {
+			t.Fatal("user-bound stream 20 should not appear in available streams")
+		}
+	}
+}
+
+func TestSeekForwardLockedInBindMode(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m.bindMode = true
+	m = upd(m, gMsg(midi.ActionSeekForward))
+	if m.selected != 0 {
+		t.Fatalf("seek-forward should be locked in bind mode, selected = %d", m.selected)
 	}
 }
 

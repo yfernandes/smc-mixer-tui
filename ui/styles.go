@@ -57,6 +57,7 @@ var (
 
 	globalBarStyle = lipgloss.NewStyle().Foreground(colorDim)
 	bindBarStyle   = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
+	navFocusStyle  = lipgloss.NewStyle().Foreground(colorGold) // focused nav setting (not bold)
 	styleNoDevice  = lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
 
 	bindCursorStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)

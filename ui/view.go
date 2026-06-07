@@ -19,6 +19,9 @@ func (m Model) View() string {
 	if m.bindMode {
 		return lipgloss.JoinVertical(lipgloss.Left, row, m.renderBindPanel())
 	}
+	if m.navStreamOpen {
+		return lipgloss.JoinVertical(lipgloss.Left, row, m.renderNavStreamPanel())
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, row, m.renderBar())
 }
 
@@ -71,7 +74,17 @@ func (m Model) renderStrip(ch int) string {
 	right := lipgloss.NewStyle().Width(rightW)
 	row := func(l, r string) string { return left.Render(l) + right.Render(r) }
 
+	// focusedNav is true when this is the selected strip and we're in MIDI nav mode.
+	focusedNav := ch == m.selected && !m.bindMode
+
 	name := nameLabel(c, state, m.labels[ch])
+	// Prefix the name with a cycle indicator when stream nav is focused on this strip.
+	if focusedNav && m.navSetting == navStream {
+		name = truncate("⇌ "+name, leftW+rightW)
+	} else {
+		name = truncate(name, leftW+rightW)
+	}
+
 	subtitle := subtitleLabel(es, state)
 	fRows := faderRows(c.ActualVolume, faderH, leftW)
 	volPct := pickupLabel(c)
@@ -87,14 +100,14 @@ func (m Model) renderStrip(ch int) string {
 
 	lines := []string{
 		fmt.Sprintf("CH%-2d", ch+1),
-		truncate(name, leftW+rightW),
+		name,
 		truncate(subtitle, leftW+rightW),
 		knobLine,
 		knobBar,
 		row("", ""),
-		row(fRows[0], renderBtn("M", c.Mute || c.SoloMuted, btnMuteOn)),
-		row(fRows[1], renderBtn("S", c.Solo, btnSoloOn)),
-		row(fRows[2], renderBtn("R", c.Rec || m.ChannelAdvanced[ch], btnRecOn)),
+		row(fRows[0], renderBtnFocused("M", c.Mute||c.SoloMuted, btnMuteOn, focusedNav && m.navSetting == navMute)),
+		row(fRows[1], renderBtnFocused("S", c.Solo, btnSoloOn, focusedNav && m.navSetting == navSolo)),
+		row(fRows[2], renderBtn("R", c.Rec||m.ChannelAdvanced[ch], btnRecOn)),
 		row(fRows[3], renderBtn("■", c.Stop, btnStopOn)),
 		row(fRows[4], volPct),
 	}
@@ -145,9 +158,32 @@ func subtitleLabel(es *streams.EnrichedStream, state channelState) string {
 	return streamSubtitle(*es)
 }
 
+// renderStreamRows builds the item rows for a stream list panel. It renders avail[scroll:end]
+// with kind section headers at group boundaries and the item at highlightIdx marked with ▶.
+// w is the total terminal width available for each row.
+func renderStreamRows(avail []streams.EnrichedStream, scroll, end, highlightIdx, w int) []string {
+	rows := make([]string, 0, end-scroll+1)
+	for i := scroll; i < end; i++ {
+		es := avail[i]
+		if i == 0 || avail[i].Kind != avail[i-1].Kind {
+			rows = append(rows, kindHeader(es.Kind, w))
+		}
+		tag, tagStyle := kindTag(es.Kind)
+		label := " " + es.Name
+		if sub := bindSubtitle(es); sub != "" {
+			label += "  ·  " + sub
+		}
+		if i == highlightIdx {
+			rows = append(rows, tagStyle.Render(tag)+bindCursorStyle.Width(w-2-len(tag)).Render("▶"+label))
+		} else {
+			rows = append(rows, tagStyle.Render(tag)+bindItemStyle.Width(w-2-len(tag)).Render(" "+label))
+		}
+	}
+	return rows
+}
+
 // renderBindPanel renders the full-width stream picker shown below the strips
-// when the user is in bind mode. It lists all enriched streams with the cursor
-// highlighted, scrolling so the cursor is always visible.
+// when the user is in bind mode. Only shows streams not user-bound to other channels.
 func (m Model) renderBindPanel() string {
 	w := m.termW
 	if w < 40 {
@@ -159,39 +195,76 @@ func (m Model) renderBindPanel() string {
 		m.selected+1,
 	))
 
-	if len(m.enriched) == 0 {
+	avail := m.availableStreams()
+	if len(avail) == 0 {
 		return lipgloss.JoinVertical(lipgloss.Left, header,
 			bindBarStyle.Render(" (no streams)"))
 	}
 
-	end := m.bindScroll + bindVisible
-	if end > len(m.enriched) {
-		end = len(m.enriched)
+	cursor := m.bindCursor
+	if cursor >= len(avail) {
+		cursor = len(avail) - 1
 	}
+	end := min(m.bindScroll+bindVisible, len(avail))
 
-	rows := make([]string, 0, end-m.bindScroll+2)
+	var rows []string
 	if m.bindScroll > 0 {
 		rows = append(rows, bindDimStyle.Render(fmt.Sprintf("  ↑ %d more", m.bindScroll)))
 	}
-	for i := m.bindScroll; i < end; i++ {
-		es := m.enriched[i]
-		// Insert a section header at the start of each kind group.
-		if i == 0 || m.enriched[i].Kind != m.enriched[i-1].Kind {
-			rows = append(rows, kindHeader(es.Kind, w))
-		}
-		tag, tagStyle := kindTag(es.Kind)
-		label := " " + es.Name
-		if sub := bindSubtitle(es); sub != "" {
-			label += "  ·  " + sub
-		}
-		if i == m.bindCursor {
-			rows = append(rows, tagStyle.Render(tag)+bindCursorStyle.Width(w-2-len(tag)).Render("▶"+label))
-		} else {
-			rows = append(rows, tagStyle.Render(tag)+bindItemStyle.Width(w-2-len(tag)).Render(" "+label))
+	rows = append(rows, renderStreamRows(avail, m.bindScroll, end, cursor, w)...)
+	if below := len(avail) - end; below > 0 {
+		rows = append(rows, bindDimStyle.Render(fmt.Sprintf("  ↓ %d more", below)))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, lipgloss.JoinVertical(lipgloss.Left, rows...))
+}
+
+// renderNavStreamPanel renders the stream list used while navigating with ◀▶ in navStream mode.
+// The currently-bound stream is highlighted; cycling with ◀▶ binds immediately.
+func (m Model) renderNavStreamPanel() string {
+	w := m.termW
+	if w < 40 {
+		w = 120
+	}
+
+	header := bindBarStyle.Render(fmt.Sprintf(
+		" CH%d stream   ◀▶ cycle   ↑↓ function   enter bind list   u unbind   q quit",
+		m.selected+1,
+	))
+
+	avail := m.availableStreams()
+	if len(avail) == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left, header,
+			bindDimStyle.Render(" (no streams available)"))
+	}
+
+	// Find the currently-bound stream in the available list.
+	boundIdx := -1
+	if id := m.channels[m.selected].StreamID; id != nil {
+		for i, s := range avail {
+			if s.ID == *id {
+				boundIdx = i
+				break
+			}
 		}
 	}
-	below := len(m.enriched) - end
-	if below > 0 {
+
+	// Scroll window centred on the bound stream.
+	scroll := 0
+	if boundIdx >= 0 {
+		scroll = max(0, boundIdx-bindVisible/2)
+		if scroll+bindVisible > len(avail) {
+			scroll = max(0, len(avail)-bindVisible)
+		}
+	}
+	end := min(scroll+bindVisible, len(avail))
+
+	var rows []string
+	if scroll > 0 {
+		rows = append(rows, bindDimStyle.Render(fmt.Sprintf("  ↑ %d more", scroll)))
+	}
+	rows = append(rows, renderStreamRows(avail, scroll, end, boundIdx, w)...)
+	if below := len(avail) - end; below > 0 {
 		rows = append(rows, bindDimStyle.Render(fmt.Sprintf("  ↓ %d more", below)))
 	}
 
@@ -202,10 +275,19 @@ func (m Model) renderBar() string {
 	if !m.deviceConnected {
 		return styleNoDevice.Render(" ⚠ no MIDI device — waiting for SMC…   q quit")
 	}
-	return globalBarStyle.Render(fmt.Sprintf(
-		" page: %-12s   ←→ select   enter bind   u unbind   q quit",
-		m.ActivePage,
-	))
+	names := [navSettingCount]string{"stream", "mute", "solo"}
+	dim := globalBarStyle
+	var settingParts [navSettingCount]string
+	for i := 0; i < int(navSettingCount); i++ {
+		if navSetting(i) == m.navSetting {
+			settingParts[i] = bindBarStyle.Render(names[i])
+		} else {
+			settingParts[i] = dim.Render(names[i])
+		}
+	}
+	return dim.Render(fmt.Sprintf(" page: %-12s   ←→ channel   ↑↓ ", m.ActivePage)) +
+		settingParts[0] + dim.Render("/") + settingParts[1] + dim.Render("/") + settingParts[2] +
+		dim.Render("   enter bind   u unbind   q quit")
 }
 
 func selectStripStyle(selected bool, state channelState, kind audio.NodeKind) lipgloss.Style {

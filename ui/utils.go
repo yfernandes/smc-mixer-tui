@@ -44,6 +44,19 @@ func renderBtn(label string, active bool, on lipgloss.Style) string {
 	return btnInactive.Render(s)
 }
 
+// renderBtnFocused is like renderBtn but renders in gold when focused and inactive,
+// indicating this button is the currently-selected MIDI nav setting.
+func renderBtnFocused(label string, active bool, on lipgloss.Style, focused bool) string {
+	s := "[" + label + "]"
+	if active {
+		return on.Render(s)
+	}
+	if focused {
+		return navFocusStyle.Render(s)
+	}
+	return btnInactive.Render(s)
+}
+
 // faderBar returns a horizontal bar of width chars representing val (0.0–1.0).
 func faderBar(val float64, width int) string {
 	filled := max(0, min(width, int(math.Round(val*float64(width)))))
