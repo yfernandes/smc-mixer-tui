@@ -25,7 +25,7 @@ type Server struct {
 	mu      sync.RWMutex
 	clients map[*serverConn]struct{}
 
-	streamsMu     sync.RWMutex
+	streamsMu      sync.RWMutex
 	currentStreams []streams.EnrichedStream
 }
 
@@ -161,42 +161,68 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 }
 
 func (s *Server) handleCmd(ctx context.Context, env envelope) {
+	cmd, ok, err := decodeCommand(env)
+	if err != nil {
+		log.Printf("daemon: %s decode: %v", env.Kind, err)
+		return
+	}
+	if !ok {
+		return
+	}
+	cmd.apply(ctx, s)
+	s.BroadcastSnapshot(s.disp.Snapshot())
+}
+
+type clientCommand struct {
+	kind msgKind
+	bind bindPayload
+	ch   int
+}
+
+func decodeCommand(env envelope) (clientCommand, bool, error) {
 	switch env.Kind {
 	case kindBind:
 		var p bindPayload
 		if err := json.Unmarshal(env.Data, &p); err != nil {
-			log.Printf("daemon: bind decode: %v", err)
-			return
+			return clientCommand{}, false, err
 		}
-		s.disp.UserBind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName)
-		s.BroadcastSnapshot(s.disp.Snapshot())
+		return clientCommand{kind: env.Kind, bind: p, ch: p.Ch}, true, nil
 
 	case kindUnbind:
 		var p unbindPayload
 		if err := json.Unmarshal(env.Data, &p); err != nil {
-			log.Printf("daemon: unbind decode: %v", err)
-			return
+			return clientCommand{}, false, err
 		}
-		s.disp.Unbind(p.Ch)
-		s.BroadcastSnapshot(s.disp.Snapshot())
+		return clientCommand{kind: env.Kind, ch: p.Ch}, true, nil
 
 	case kindMute:
 		var p muteTogglePayload
 		if err := json.Unmarshal(env.Data, &p); err != nil {
-			log.Printf("daemon: mute decode: %v", err)
-			return
+			return clientCommand{}, false, err
 		}
-		s.disp.ToggleMute(p.Ch)
-		s.BroadcastSnapshot(s.disp.Snapshot())
+		return clientCommand{kind: env.Kind, ch: p.Ch}, true, nil
 
 	case kindSolo:
 		var p soloTogglePayload
 		if err := json.Unmarshal(env.Data, &p); err != nil {
-			log.Printf("daemon: solo decode: %v", err)
-			return
+			return clientCommand{}, false, err
 		}
-		s.disp.ToggleSolo(p.Ch)
-		s.BroadcastSnapshot(s.disp.Snapshot())
+		return clientCommand{kind: env.Kind, ch: p.Ch}, true, nil
+	}
+	return clientCommand{}, false, nil
+}
+
+func (cmd clientCommand) apply(ctx context.Context, s *Server) {
+	switch cmd.kind {
+	case kindBind:
+		p := cmd.bind
+		s.disp.UserBind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName)
+	case kindUnbind:
+		s.disp.Unbind(cmd.ch)
+	case kindMute:
+		s.disp.ToggleMute(cmd.ch)
+	case kindSolo:
+		s.disp.ToggleSolo(cmd.ch)
 	}
 }
 

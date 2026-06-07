@@ -52,7 +52,7 @@ func TestReadMIDI_RunningStatus(t *testing.T) {
 	// Two NoteOn messages; second omits the status byte.
 	raw := []byte{
 		0x90, 0x00, 0x7f, // rec ch0 pressed (full)
-		0x01, 0x7f,       // rec ch1 pressed (running status)
+		0x01, 0x7f, // rec ch1 pressed (running status)
 	}
 	msgs, err := pipeListener(raw)
 	if err != nil {
@@ -65,6 +65,46 @@ func TestReadMIDI_RunningStatus(t *testing.T) {
 	b1 := msgs[1].(ButtonMsg)
 	if b0.Channel != 0 || b1.Channel != 1 {
 		t.Errorf("channels: got %d, %d", b0.Channel, b1.Channel)
+	}
+}
+
+func TestReadMIDI_DataBeforeStatusIgnored(t *testing.T) {
+	raw := []byte{
+		0x00, 0x7f, // data bytes without running status
+		0x90, 0x00, 0x7f, // rec ch0 pressed
+	}
+	msgs, err := pipeListener(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("want only the message after explicit status, got %d: %v", len(msgs), msgs)
+	}
+	b := msgs[0].(ButtonMsg)
+	if b.Channel != 0 || b.Kind != ButtonRec || !b.Pressed {
+		t.Fatalf("unexpected message: %+v", b)
+	}
+}
+
+func TestReadMIDI_SysExClearsRunningStatus(t *testing.T) {
+	raw := []byte{
+		0x90, 0x00, 0x7f, // rec ch0 pressed
+		0xf0, 0x41, 0xf7, // SysEx clears running status
+		0x01, 0x7f, // would be rec ch1 if running status survived
+		0x90, 0x02, 0x7f, // rec ch2 pressed
+	}
+	msgs, err := pipeListener(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 msgs, got %d: %v", len(msgs), msgs)
+	}
+	if b := msgs[0].(ButtonMsg); b.Channel != 0 {
+		t.Fatalf("msg[0] channel = %d, want 0", b.Channel)
+	}
+	if b := msgs[1].(ButtonMsg); b.Channel != 2 {
+		t.Fatalf("msg[1] channel = %d, want 2", b.Channel)
 	}
 }
 
@@ -89,7 +129,7 @@ func TestReadMIDI_RealTimeIgnored(t *testing.T) {
 func TestReadMIDI_SysExSkipped(t *testing.T) {
 	raw := []byte{
 		0xf0, 0x41, 0x10, 0xf7, // SysEx (discarded)
-		0x90, 0x00, 0x7f,        // rec ch0 pressed
+		0x90, 0x00, 0x7f, // rec ch0 pressed
 	}
 	msgs, err := pipeListener(raw)
 	if err != nil {

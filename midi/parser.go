@@ -12,84 +12,120 @@ import (
 // Real-time messages (0xf8–0xff) are silently ignored even when interleaved
 // inside another message. SysEx messages are consumed and discarded.
 func readMIDI(r io.Reader, out chan<- Msg) error {
-	buf := bufio.NewReaderSize(r, 64)
-	var status byte // running status
-
-	nextByte := func() (byte, error) { return buf.ReadByte() }
-
-	// nextDataByte skips real-time bytes (0xf8–0xff) that appear mid-message.
-	nextDataByte := func() (byte, error) {
-		for {
-			b, err := buf.ReadByte()
-			if err != nil {
-				return 0, err
-			}
-			if b < 0xf8 {
-				return b, nil
-			}
-		}
-	}
-
+	stream := newMIDIStream(r)
 	for {
-		b, err := nextByte()
+		raw, err := stream.nextRawMessage()
 		if err != nil {
 			return err
+		}
+		if msg, ok := Classify(raw); ok {
+			out <- msg
+		}
+	}
+}
+
+type midiStream struct {
+	buf    *bufio.Reader
+	status byte // running status
+}
+
+func newMIDIStream(r io.Reader) *midiStream {
+	return &midiStream{buf: bufio.NewReaderSize(r, 64)}
+}
+
+func (s *midiStream) nextRawMessage() ([3]byte, error) {
+	for {
+		raw, ok, err := s.readRawMessage()
+		if err != nil {
+			return [3]byte{}, err
+		}
+		if ok {
+			return raw, nil
+		}
+	}
+}
+
+func (s *midiStream) readRawMessage() ([3]byte, bool, error) {
+	for {
+		b, err := s.buf.ReadByte()
+		if err != nil {
+			return [3]byte{}, false, err
 		}
 
 		if b >= 0xf8 {
 			continue
 		}
 
-		// SysEx: consume until End-of-Exclusive and clear running status.
 		if b == 0xf0 {
-			status = 0
-			for {
-				x, err := nextDataByte()
-				if err != nil {
-					return err
-				}
-				if x == 0xf7 {
-					break
-				}
+			if err := s.skipSysEx(); err != nil {
+				return [3]byte{}, false, err
 			}
 			continue
 		}
 
-		var raw [3]byte
-		var data1 byte
+		return s.messageFromLeadingByte(b)
+	}
+}
 
-		if b >= 0x80 {
-			status = b
-			n := dataBytes(status)
-			if n <= 0 {
-				continue
-			}
-			data1, err = nextDataByte()
-			if err != nil {
-				return err
-			}
-		} else {
-			if status == 0 {
-				continue
-			}
-			data1 = b
+func (s *midiStream) skipSysEx() error {
+	s.status = 0
+	for {
+		x, err := s.nextDataByte()
+		if err != nil {
+			return err
 		}
+		if x == 0xf7 {
+			return nil
+		}
+	}
+}
 
-		n := dataBytes(status)
-		if n <= 0 {
-			continue
-		}
-		raw[0] = status
-		raw[1] = data1
-		if n == 2 {
-			raw[2], err = nextDataByte()
-			if err != nil {
-				return err
-			}
-		}
+func (s *midiStream) messageFromLeadingByte(b byte) ([3]byte, bool, error) {
+	var raw [3]byte
+	var data1 byte
 
-		if msg, ok := Classify(raw); ok {
-			out <- msg
+	if b >= 0x80 {
+		s.status = b
+		if dataBytes(s.status) <= 0 {
+			return raw, false, nil
+		}
+		var err error
+		data1, err = s.nextDataByte()
+		if err != nil {
+			return raw, false, err
+		}
+	} else {
+		if s.status == 0 {
+			return raw, false, nil
+		}
+		data1 = b
+	}
+
+	n := dataBytes(s.status)
+	if n <= 0 {
+		return raw, false, nil
+	}
+	raw[0] = s.status
+	raw[1] = data1
+	if n == 2 {
+		var err error
+		raw[2], err = s.nextDataByte()
+		if err != nil {
+			return raw, false, err
+		}
+	}
+	return raw, true, nil
+}
+
+// nextDataByte skips real-time bytes (0xf8–0xff) that appear mid-message.
+func (s *midiStream) nextDataByte() (byte, error) {
+	for {
+		b, err := s.buf.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		if b < 0xf8 {
+			return b, nil
 		}
 	}
 }

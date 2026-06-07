@@ -14,7 +14,7 @@ type pwNode struct {
 	ID   uint32 `json:"id"`
 	Type string `json:"type"`
 	Info struct {
-		State string                    `json:"state"`
+		State string                     `json:"state"`
 		Props map[string]json.RawMessage `json:"props"`
 	} `json:"info"`
 }
@@ -51,58 +51,66 @@ func parseStreams(data []byte) ([]Stream, error) {
 		if n.Type != "PipeWire:Interface:Node" {
 			continue
 		}
-		class := rawStr(n.Info.Props["media.class"])
-		var kind audio.NodeKind
-		switch class {
-		case "Stream/Output/Audio":
-			kind = audio.KindSource
-		case "Stream/Input/Audio", "Audio/Source", "Audio/Source/Virtual":
-			kind = audio.KindMic
-		case "Audio/Sink", "Audio/Sink/Virtual":
-			kind = audio.KindSink
-		default:
+		class, kind, ok := nodeKind(n)
+		if !ok {
 			continue
 		}
-
-		// Skip browser tabs and other clients that registered an audio context
-		// but aren't actively playing or paused (suspended = no data flowing).
-		if strings.HasPrefix(class, "Stream/") && n.Info.State == "suspended" {
+		if skipInactiveStream(class, n.Info.State) {
 			continue
 		}
 
 		clientID := rawUint32(n.Info.Props["client.id"])
-
-		// Hardware devices expose a human-readable node.description; prefer it.
-		name := rawStr(n.Info.Props["node.description"])
-		if name == "" {
-			name = rawStr(n.Info.Props["application.name"])
-		}
-		if name == "" && clientID > 0 {
-			name = clientNames[clientID]
-		}
-		if name == "" {
-			name = rawStr(n.Info.Props["node.name"])
-		}
-		if name == "" {
-			name = fmt.Sprintf("stream-%d", n.ID)
-		}
-
-		// Resolve PID: prefer the node-level property, fall back to the client node.
-		pid := rawUint32(n.Info.Props["application.process.id"])
-		if pid == 0 && clientID > 0 {
-			pid = clientPIDs[clientID]
-		}
-
 		streams = append(streams, Stream{
 			ID:        n.ID,
-			Name:      name,
+			Name:      streamName(n, clientNames[clientID]),
 			NodeName:  rawStr(n.Info.Props["node.name"]),
 			MediaName: rawStr(n.Info.Props["media.name"]),
-			PID:       pid,
+			PID:       streamPID(n, clientPIDs[clientID]),
 			Kind:      kind,
 		})
 	}
 	return streams, nil
+}
+
+func nodeKind(n pwNode) (string, audio.NodeKind, bool) {
+	class := rawStr(n.Info.Props["media.class"])
+	switch class {
+	case "Stream/Output/Audio":
+		return class, audio.KindSource, true
+	case "Stream/Input/Audio", "Audio/Source", "Audio/Source/Virtual":
+		return class, audio.KindMic, true
+	case "Audio/Sink", "Audio/Sink/Virtual":
+		return class, audio.KindSink, true
+	default:
+		return class, 0, false
+	}
+}
+
+func skipInactiveStream(class, state string) bool {
+	// Browser tabs and other clients can register audio streams while suspended;
+	// keep paused/idle streams, but drop suspended Stream/* nodes with no data.
+	return strings.HasPrefix(class, "Stream/") && state == "suspended"
+}
+
+func streamName(n pwNode, clientName string) string {
+	for _, name := range []string{
+		rawStr(n.Info.Props["node.description"]),
+		rawStr(n.Info.Props["application.name"]),
+		clientName,
+		rawStr(n.Info.Props["node.name"]),
+	} {
+		if name != "" {
+			return name
+		}
+	}
+	return fmt.Sprintf("stream-%d", n.ID)
+}
+
+func streamPID(n pwNode, clientPID uint32) uint32 {
+	if pid := rawUint32(n.Info.Props["application.process.id"]); pid > 0 {
+		return pid
+	}
+	return clientPID
 }
 
 // parseSinkInputs parses the output of "pactl list sink-inputs".

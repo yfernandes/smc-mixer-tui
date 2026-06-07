@@ -177,6 +177,69 @@ func TestParseStreams_ClientPIDResolution(t *testing.T) {
 	}
 }
 
+func TestParseStreams_NodePIDAndDescriptionOverrideClientFallbacks(t *testing.T) {
+	data := `[
+	  {
+	    "id": 96,
+	    "type": "PipeWire:Interface:Client",
+	    "info": {"props": {
+	      "application.name": "client-name",
+	      "application.process.id": 2000
+	    }}
+	  },
+	  {
+	    "id": 124,
+	    "type": "PipeWire:Interface:Node",
+	    "info": {"props": {
+	      "media.class": "Stream/Output/Audio",
+	      "node.description": "Human Name",
+	      "application.name": "node-app",
+	      "node.name": "node-name",
+	      "application.process.id": 3000,
+	      "client.id": 96,
+	      "media.name": "Track Title"
+	    }}
+	  }
+	]`
+	ss, err := parseStreams([]byte(data))
+	if err != nil || len(ss) != 1 {
+		t.Fatalf("err=%v, len=%d", err, len(ss))
+	}
+	s := ss[0]
+	if s.Name != "Human Name" {
+		t.Errorf("Name = %q, want node.description", s.Name)
+	}
+	if s.PID != 3000 {
+		t.Errorf("PID = %d, want node-level PID", s.PID)
+	}
+	if s.NodeName != "node-name" {
+		t.Errorf("NodeName = %q, want node.name", s.NodeName)
+	}
+	if s.MediaName != "Track Title" {
+		t.Errorf("MediaName = %q, want media.name", s.MediaName)
+	}
+}
+
+func TestParseStreams_MicrophoneClasses(t *testing.T) {
+	data := `[
+	  {"id":1,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Stream/Input/Audio","node.name":"app-capture"}}},
+	  {"id":2,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Audio/Source","node.name":"mic"}}},
+	  {"id":3,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Audio/Source/Virtual","node.name":"virtual-mic"}}}
+	]`
+	ss, err := parseStreams([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ss) != 3 {
+		t.Fatalf("want 3 mic streams, got %d: %+v", len(ss), ss)
+	}
+	for _, s := range ss {
+		if s.Kind != audio.KindMic {
+			t.Fatalf("%s Kind = %v, want KindMic", s.Name, s.Kind)
+		}
+	}
+}
+
 func TestParseStreams_SuspendedStreamFiltered(t *testing.T) {
 	data := `[
 	  {"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Output/Audio","node.name":"spotify"}}},
