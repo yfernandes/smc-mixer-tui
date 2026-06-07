@@ -7,6 +7,7 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
+	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
@@ -217,6 +218,45 @@ func TestPlanBindingsSkipsManuallyUnboundChannels(t *testing.T) {
 	}
 }
 
+func TestPlanBindingsPreservesPinnedMainPageLiveBinding(t *testing.T) {
+	cfg := testConfig(config.BindPlayback, "firefox")
+	id := uint32(20)
+	snap := [8]dispatcher.Channel{}
+	snap[0].StreamID = &id
+	snap[0].Name = "Spotify"
+	snap[0].Kind = audio.KindSource
+	snap[0].Pinned = true
+	ss := []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+		stream(30, "Firefox", "firefox", audio.KindSource),
+	}
+
+	actions := planBindings(cfg, "main", snap, ss)
+
+	if len(actions) != 0 {
+		t.Fatalf("pinned live main-page binding should be preserved, got %+v", actions)
+	}
+}
+
+func TestPlanBindingsLosesLiveBindingWhenPageSlotIsEmpty(t *testing.T) {
+	cfg := &config.Config{
+		Devices: map[string]config.DeviceConfig{},
+		Pages:   map[string]config.PageConfig{"main": {Faders: map[int]*string{}}},
+	}
+	id := uint32(20)
+	snap := [8]dispatcher.Channel{}
+	snap[0].StreamID = &id
+	ss := []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+	}
+
+	actions := planBindings(cfg, "main", snap, ss)
+
+	if len(actions) != 1 || !actions[0].lose {
+		t.Fatalf("empty configured slot should lose live binding, got %+v", actions)
+	}
+}
+
 func TestStreamMatcherMatchTitle(t *testing.T) {
 	cfg := &config.Config{
 		Devices: map[string]config.DeviceConfig{
@@ -235,6 +275,69 @@ func TestStreamMatcherMatchTitle(t *testing.T) {
 
 	if len(actions) != 1 || actions[0].id != 10 {
 		t.Fatalf("match-title should bind stream 10, got %+v", actions)
+	}
+}
+
+func TestApplyKnobBindingsBindsMainPageGainKnob(t *testing.T) {
+	cfg := &config.Config{
+		Devices: map[string]config.DeviceConfig{
+			"knob0": {
+				Type:  config.BindPlayback,
+				Match: "spotify",
+				Knob:  &config.KnobConfig{Type: config.KnobGain},
+			},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Knobs: map[int]*string{0: sp("knob0")}},
+		},
+	}
+	disp := dispatcher.New(newNoopPW())
+
+	applyKnobBindings(cfg, disp, "main", []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+	})
+
+	got := disp.Snapshot()[0].KnobStreamID
+	if got == nil || *got != 20 {
+		t.Fatalf("KnobStreamID = %v, want 20", got)
+	}
+}
+
+func TestApplyKnobBindingsClearsOutsideMainPage(t *testing.T) {
+	cfg := testConfig(config.BindPlayback, "spotify")
+	disp := dispatcher.New(newNoopPW())
+	disp.BindKnob(0, 20)
+	disp.OnGlobal(midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
+
+	applyKnobBindings(cfg, disp, disp.ActivePage(), []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+	})
+
+	if got := disp.Snapshot()[0].KnobStreamID; got != nil {
+		t.Fatalf("KnobStreamID = %v outside main page, want nil", *got)
+	}
+}
+
+func TestKnobBindingCandidateSkipsSendKnob(t *testing.T) {
+	cfg := &config.Config{
+		Devices: map[string]config.DeviceConfig{
+			"knob0": {
+				Type:  config.BindPlayback,
+				Match: "spotify",
+				Knob:  &config.KnobConfig{Type: config.KnobSend},
+			},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Knobs: map[int]*string{0: sp("knob0")}},
+		},
+	}
+
+	got := knobBindingCandidate(cfg, "main", 0, []streams.EnrichedStream{
+		stream(20, "Spotify", "spotify", audio.KindSource),
+	})
+
+	if got != nil {
+		t.Fatalf("send knob should not bind as gain knob, got %+v", *got)
 	}
 }
 
