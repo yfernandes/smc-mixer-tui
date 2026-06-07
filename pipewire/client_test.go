@@ -177,6 +177,40 @@ func TestParseStreams_ClientPIDResolution(t *testing.T) {
 	}
 }
 
+func TestParseStreams_SuspendedStreamFiltered(t *testing.T) {
+	data := `[
+	  {"id":1,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"media.class":"Stream/Output/Audio","node.name":"spotify"}}},
+	  {"id":2,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"media.class":"Stream/Output/Audio","node.name":"zombie-tab"}}},
+	  {"id":3,"type":"PipeWire:Interface:Node","info":{"state":"idle","props":{"media.class":"Stream/Output/Audio","node.name":"paused-player"}}}
+	]`
+	ss, err := parseStreams([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ss) != 2 {
+		t.Fatalf("want 2 streams (running+idle), got %d: %v", len(ss), ss)
+	}
+	names := map[string]bool{}
+	for _, s := range ss {
+		names[s.Name] = true
+	}
+	if !names["spotify"] || !names["paused-player"] {
+		t.Errorf("expected spotify and paused-player, got names=%v", names)
+	}
+	if names["zombie-tab"] {
+		t.Errorf("suspended stream must be filtered out")
+	}
+}
+
+func TestParseStreams_SuspendedSinkNotFiltered(t *testing.T) {
+	// Hardware sinks must never be filtered by state — state filter is Stream-only.
+	data := `[{"id":11,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"media.class":"Audio/Sink","node.description":"Built-in Audio"}}}]`
+	ss, err := parseStreams([]byte(data))
+	if err != nil || len(ss) != 1 {
+		t.Fatalf("suspended sink must not be filtered: err=%v len=%d", err, len(ss))
+	}
+}
+
 func TestParseStreams_InvalidJSON(t *testing.T) {
 	_, err := parseStreams([]byte("{not json}"))
 	if err == nil {

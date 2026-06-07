@@ -244,6 +244,39 @@ func TestEnrichMPRISAncestorMatch(t *testing.T) {
 	}
 }
 
+func TestEnrichAppNamePreservedAfterMPRIS(t *testing.T) {
+	e := &Enricher{
+		pw:    fakePW([]pipewire.Stream{{ID: 10, Name: "spotify", PID: 100}}),
+		hypr:  noHypr,
+		mpris: fakeMPRIS([]mprisPlayer{{Name: "spotify", PID: 100, Track: "Invincible", Artist: "TOOL"}}),
+	}
+	ss, _ := e.Enrich(context.Background())
+	s := ss[0]
+	if s.AppName != "spotify" {
+		t.Errorf("AppName = %q, want original PW name %q", s.AppName, "spotify")
+	}
+	// Name is overridden by MPRIS (same value here, but Artist/Track confirm enrichment worked)
+	if s.Artist != "TOOL" || s.Track != "Invincible" {
+		t.Errorf("MPRIS metadata not applied: %+v", s)
+	}
+}
+
+func TestEnrichAppNamePreservedAfterHyprland(t *testing.T) {
+	e := &Enricher{
+		pw:    fakePW([]pipewire.Stream{{ID: 10, Name: "Zen", PID: 100}}),
+		hypr:  fakeHypr([]hyprWindow{{PID: 100, Class: "zen", Title: "Claude | Anthropic"}}),
+		mpris: noMPRIS,
+	}
+	ss, _ := e.Enrich(context.Background())
+	s := ss[0]
+	if s.AppName != "Zen" {
+		t.Errorf("AppName = %q, want original PW name %q", s.AppName, "Zen")
+	}
+	if s.Name == "Zen" {
+		t.Errorf("Name should have been overridden by Hyprland enrichment, got %q", s.Name)
+	}
+}
+
 func TestEnrichBindKeyEqualName(t *testing.T) {
 	e := &Enricher{
 		pw:    fakePW([]pipewire.Stream{{ID: 5, Name: "discord", PID: 50}}),

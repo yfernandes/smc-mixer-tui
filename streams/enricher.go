@@ -22,7 +22,8 @@ const (
 type EnrichedStream struct {
 	ID          uint32 // PipeWire node ID
 	PID         uint32 // OS process ID; 0 if unavailable
-	Name        string // best display name
+	Name        string // best display name (may be overwritten by Hyprland/MPRIS enrichment)
+	AppName     string // original PipeWire application.name, before enrichment
 	NodeName    string // PipeWire node.name (stable, used for pactl sink addressing)
 	BindKey     string // stable key for config matching (MPRIS name or app.name)
 	Source      Source
@@ -175,6 +176,7 @@ func enrichStreamIdentity(
 		ID:        s.ID,
 		PID:       s.PID,
 		Name:      s.Name,
+		AppName:   s.Name,
 		NodeName:  s.NodeName,
 		BindKey:   s.Name,
 		Source:    SourcePipeWire,

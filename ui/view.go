@@ -77,14 +77,6 @@ func (m Model) renderStrip(ch int) string {
 	// focusedNav is true when this is the selected strip and we're in MIDI nav mode.
 	focusedNav := ch == m.selected && !m.bindMode
 
-	name := nameLabel(c, state, m.labels[ch])
-	// Prefix the name with a cycle indicator when stream nav is focused on this strip.
-	if focusedNav && m.navSetting == navStream {
-		name = truncate("⇌ "+name, leftW+rightW)
-	} else {
-		name = truncate(name, leftW+rightW)
-	}
-
 	subtitle := subtitleLabel(es, state)
 	fRows := faderRows(c.ActualVolume, faderH, leftW)
 	volPct := pickupLabel(c)
@@ -98,10 +90,52 @@ func (m Model) renderStrip(ch int) string {
 		knobBar = faderBar(float64(c.Knob)/127.0, knobBarW+1)
 	}
 
+	// Use the enriched header layout when Hyprland/MPRIS enrichment changed the
+	// display name (browser tabs) or when MPRIS provides structured track metadata.
+	hasMPRISTrack := es != nil && es.Source == streams.SourceMPRIS && (es.Artist != "" || es.Track != "")
+	useEnriched := es != nil && es.AppName != "" && (es.AppName != es.Name || hasMPRISTrack)
+	var header, nameLine, subLine string
+	if useEnriched {
+		appDisplay := capitalize(es.AppName)
+		header = truncate(fmt.Sprintf("CH%d - %s", ch+1, appDisplay), leftW+rightW)
+		if hasMPRISTrack {
+			// Artist on line 2, track on line 3.
+			if es.Artist != "" {
+				nameLine = truncate(es.Artist, leftW+rightW)
+				subLine = truncate(es.Track, leftW+rightW)
+			} else {
+				nameLine = truncate(es.Track, leftW+rightW)
+			}
+			if focusedNav && m.navSetting == navStream {
+				nameLine = truncate("⇌ "+nameLine, leftW+rightW)
+			}
+		} else {
+			// Browser tab: word-wrap the tab title across two rows.
+			content := subtitle
+			if content == "" {
+				content = es.Name
+			}
+			if focusedNav && m.navSetting == navStream {
+				content = "⇌ " + content
+			}
+			nameLine, subLine = wrapTwo(content, leftW+rightW)
+		}
+	} else {
+		header = fmt.Sprintf("CH%-2d", ch+1)
+		name := nameLabel(c, state, m.labels[ch])
+		if focusedNav && m.navSetting == navStream {
+			name = truncate("⇌ "+name, leftW+rightW)
+		} else {
+			name = truncate(name, leftW+rightW)
+		}
+		nameLine = name
+		subLine = truncate(subtitle, leftW+rightW)
+	}
+
 	lines := []string{
-		fmt.Sprintf("CH%-2d", ch+1),
-		name,
-		truncate(subtitle, leftW+rightW),
+		header,
+		nameLine,
+		subLine,
 		knobLine,
 		knobBar,
 		row("", ""),

@@ -14,6 +14,7 @@ type pwNode struct {
 	ID   uint32 `json:"id"`
 	Type string `json:"type"`
 	Info struct {
+		State string                    `json:"state"`
 		Props map[string]json.RawMessage `json:"props"`
 	} `json:"info"`
 }
@@ -60,6 +61,12 @@ func parseStreams(data []byte) ([]Stream, error) {
 		case "Audio/Sink", "Audio/Sink/Virtual":
 			kind = audio.KindSink
 		default:
+			continue
+		}
+
+		// Skip browser tabs and other clients that registered an audio context
+		// but aren't actively playing or paused (suspended = no data flowing).
+		if strings.HasPrefix(class, "Stream/") && n.Info.State == "suspended" {
 			continue
 		}
 

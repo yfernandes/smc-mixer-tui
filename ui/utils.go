@@ -146,6 +146,15 @@ func crossfaderLabel(nameA, nameB string) string {
 	return "⇄ " + a + "↔" + b
 }
 
+// capitalize uppercases the first rune of s.
+func capitalize(s string) string {
+	runes := []rune(s)
+	if len(runes) == 0 {
+		return s
+	}
+	return strings.ToUpper(string(runes[0])) + string(runes[1:])
+}
+
 // truncate clips s to max visible chars, appending "…" if clipped.
 func truncate(s string, max int) string {
 	runes := []rune(s)
@@ -153,4 +162,25 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-1]) + "…"
+}
+
+// wrapTwo splits s into two lines of at most width runes each, breaking at a
+// word boundary when possible. The second line is truncated with "…" if needed.
+func wrapTwo(s string, width int) (line1, line2 string) {
+	runes := []rune(s)
+	if len(runes) <= width {
+		return s, ""
+	}
+	// Find the last space at or before position width.
+	split := width
+	for i := width - 1; i > 0; i-- {
+		if runes[i] == ' ' {
+			split = i
+			break
+		}
+	}
+	line1 = strings.TrimRight(string(runes[:split]), " ")
+	rest := strings.TrimLeft(string(runes[split:]), " ")
+	line2 = truncate(rest, width)
+	return line1, line2
 }
