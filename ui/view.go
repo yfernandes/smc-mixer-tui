@@ -65,7 +65,127 @@ func (m Model) enrichedFor(ch int) *streams.EnrichedStream {
 	return nil
 }
 
+// kindToType maps a NodeKind to the config type string used by deviceTypeTag.
+func kindToType(k audio.NodeKind) string {
+	switch k {
+	case audio.KindMic:
+		return "input"
+	case audio.KindSink:
+		return "output"
+	default: // KindSource
+		return "playback"
+	}
+}
+
+// deviceTypeTag returns a short, colored inline label for the given device type.
+// Used as the suffix of a strip zone header line ("K8 · " + deviceTypeTag("input")).
+func deviceTypeTag(typ string) string {
+	switch typ {
+	case "input":
+		return subtypeInputStyle.Render("input")
+	case "playback":
+		return subtypePlaybackStyle.Render("source")
+	case "output":
+		return subtypeOutputStyle.Render("output")
+	default:
+		return subtypeDimStyle.Render("---")
+	}
+}
+
+// renderSplitStrip renders the two-zone (knob | fader) layout used on the main page
+// when a channel's knob and fader are bound to different config device keys.
+func (m Model) renderSplitStrip(ch int) string {
+	cfg := m.stripCfgs[ch]
+	c := m.channels[ch]
+	state := m.channelStateFor(ch)
+
+	const innerW = leftW + rightW // 12 — inner content width (matches row() output)
+
+	// — Knob zone ——————————————————————————————————————————————
+	knobLabel := cfg.KnobLabel
+	if knobLabel == "" {
+		knobLabel = "---"
+	}
+	knobHeader := fmt.Sprintf("K%d · ", ch+1) + deviceTypeTag(cfg.KnobType)
+
+	var knobValLine, knobBarLine string
+	if c.CrossSinkAName != "" && c.CrossSinkBName != "" {
+		knobValLine = truncate(crossfaderLabel(c.CrossSinkAName, c.CrossSinkBName), innerW)
+		knobBarLine = crossfadeBar(c.Knob, innerW+1)
+	} else {
+		knobValLine = fmt.Sprintf("○%3d ", c.Knob) + faderBar(float64(c.Knob)/127.0, innerW-5)
+	}
+
+	// — Divider ————————————————————————————————————————————————
+	divider := splitDividerStyle.Width(innerW).Render("")
+
+	// — Fader zone —————————————————————————————————————————————
+	// Static fader: use config labels. Dynamic fader (FaderType==""): use runtime stream.
+	var faderHeader, faderLabelStr string
+	if cfg.FaderType != "" {
+		label := cfg.FaderLabel
+		if label == "" {
+			label = "---"
+		}
+		faderHeader = fmt.Sprintf("F%d · ", ch+1) + deviceTypeTag(cfg.FaderType)
+		faderLabelStr = truncate(label, innerW)
+	} else if c.StreamID != nil {
+		if state == stateInactive {
+			faderHeader = fmt.Sprintf("F%d · ", ch+1) + deviceTypeTag(kindToType(c.Kind))
+			faderLabelStr = subtypeDimStyle.Render("⊗ offline")
+		} else {
+			faderHeader = fmt.Sprintf("F%d · ", ch+1) + deviceTypeTag(kindToType(c.Kind))
+			faderLabelStr = truncate(c.Name, innerW)
+		}
+	} else {
+		faderHeader = fmt.Sprintf("F%d · ", ch+1) + deviceTypeTag("")
+		faderLabelStr = subtypeDimStyle.Render("---")
+	}
+
+	left := lipgloss.NewStyle().Width(leftW)
+	right := lipgloss.NewStyle().Width(rightW)
+	row := func(l, r string) string { return left.Render(l) + right.Render(r) }
+
+	focusedNav := ch == m.selected && !m.bindMode
+	fRows := faderRows(c.ActualVolume, splitFaderH, leftW)
+	volPct := pickupLabel(c)
+
+	lines := []string{
+		// knob zone: type inline on header, label on second line
+		knobHeader,
+		truncate(knobLabel, innerW),
+		knobValLine,
+	}
+	if knobBarLine != "" {
+		lines = append(lines, knobBarLine)
+	}
+	lines = append(
+		lines,
+		divider,
+		// fader zone: type inline on header, label on second line
+		faderHeader,
+		faderLabelStr,
+		"", // blank line: bar top aligned with first button
+		row(fRows[0], renderBtnFocused("M", c.Mute || c.SoloMuted, btnMuteOn, focusedNav && m.navSetting == navMute)),
+		row(fRows[1], renderBtnFocused("S", c.Solo, btnSoloOn, focusedNav && m.navSetting == navSolo)),
+		row(fRows[2], renderBtn("R", c.Rec || m.ChannelAdvanced[ch], btnRecOn)),
+		row(fRows[3], renderBtn("■", c.Stop, btnStopOn)),
+		row(fRows[4], volPct),
+	)
+
+	var kind audio.NodeKind
+	if es := m.enrichedFor(ch); es != nil {
+		kind = es.Kind
+	}
+	return selectStripStyle(ch == m.selected, state, kind).Render(strings.Join(lines, "\n"))
+}
+
 func (m Model) renderStrip(ch int) string {
+	// Split layout: main page only, when knob and fader target different config devices.
+	if m.ActivePage == "main" && m.stripCfgs[ch].IsSplit {
+		return m.renderSplitStrip(ch)
+	}
+
 	c := m.channels[ch]
 	state := m.channelStateFor(ch)
 	es := m.enrichedFor(ch)
@@ -78,7 +198,7 @@ func (m Model) renderStrip(ch int) string {
 	focusedNav := ch == m.selected && !m.bindMode
 
 	subtitle := subtitleLabel(es, state)
-	fRows := faderRows(c.ActualVolume, faderH, leftW)
+	fRows := faderRows(c.ActualVolume, unifiedFaderH, leftW)
 	volPct := pickupLabel(c)
 
 	var knobLine, knobBar string
@@ -139,11 +259,13 @@ func (m Model) renderStrip(ch int) string {
 		knobLine,
 		knobBar,
 		row("", ""),
-		row(fRows[0], renderBtnFocused("M", c.Mute||c.SoloMuted, btnMuteOn, focusedNav && m.navSetting == navMute)),
-		row(fRows[1], renderBtnFocused("S", c.Solo, btnSoloOn, focusedNav && m.navSetting == navSolo)),
-		row(fRows[2], renderBtn("R", c.Rec||m.ChannelAdvanced[ch], btnRecOn)),
-		row(fRows[3], renderBtn("■", c.Stop, btnStopOn)),
-		row(fRows[4], volPct),
+		row(fRows[0], ""), // extra bar row — fills height to match split strips
+		row(fRows[1], renderBtnFocused("M", c.Mute || c.SoloMuted, btnMuteOn, focusedNav && m.navSetting == navMute)),
+		row(fRows[2], renderBtnFocused("S", c.Solo, btnSoloOn, focusedNav && m.navSetting == navSolo)),
+		row(fRows[3], renderBtn("R", c.Rec || m.ChannelAdvanced[ch], btnRecOn)),
+		row(fRows[4], renderBtn("■", c.Stop, btnStopOn)),
+		row(fRows[5], ""),
+		row(fRows[6], volPct),
 	}
 
 	var kind audio.NodeKind
@@ -321,7 +443,7 @@ func (m Model) renderBar() string {
 	}
 	return dim.Render(fmt.Sprintf(" page: %-12s   ←→ channel   ↑↓ ", m.ActivePage)) +
 		settingParts[0] + dim.Render("/") + settingParts[1] + dim.Render("/") + settingParts[2] +
-		dim.Render("   enter bind   u unbind   q quit")
+		dim.Render(fmt.Sprintf("   enter bind   u unbind   r reload(%d)   q quit", m.cfgReloads))
 }
 
 func selectStripStyle(selected bool, state channelState, kind audio.NodeKind) lipgloss.Style {

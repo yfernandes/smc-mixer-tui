@@ -35,17 +35,30 @@ type snapshotMsg [8]dispatcher.Channel
 
 const bindVisible = 8 // max stream rows shown in the bind panel
 
+// StripConfig carries per-channel config derived at startup from config.Pages["main"].
+// IsSplit is true when the fader and knob slots reference different device keys; in
+// that case the strip renders as two independent zones on the main page.
+type StripConfig struct {
+	IsSplit    bool
+	KnobLabel  string // DeviceConfig.Label for the knob device
+	KnobType   string // "input", "playback", "output", or ""
+	FaderLabel string // DeviceConfig.Label for the fader device
+	FaderType  string // same
+}
+
 // Model is the Bubbletea application model.
 type Model struct {
-	disp Dispatcher
+	disp     Dispatcher
+	reloadFn func() [8]StripConfig // called on 'r'; re-reads config and returns fresh strip configs
 
-	channels   [8]dispatcher.Channel
-	labels     [8]string
-	enriched   []streams.EnrichedStream
-	selected   int  // 0–7 focused channel strip
-	bindMode   bool // user is cycling streams to bind to selected channel
-	bindCursor int  // current index into enriched
-	bindScroll int  // first visible index in bind panel
+	channels    [8]dispatcher.Channel
+	labels      [8]string
+	stripCfgs   [8]StripConfig
+	enriched    []streams.EnrichedStream
+	selected    int  // 0–7 focused channel strip
+	bindMode    bool // user is cycling streams to bind to selected channel
+	bindCursor  int  // current index into enriched
+	bindScroll  int  // first visible index in bind panel
 
 	termW int // terminal width from WindowSizeMsg
 	termH int // terminal height from WindowSizeMsg
@@ -55,16 +68,21 @@ type Model struct {
 	deviceConnected bool
 	navSetting      navSetting // currently focused per-channel setting for MIDI nav
 	navStreamOpen   bool       // stream-list panel is visible; set on ◀/▶, cleared on context change
+	cfgReloads      int        // incremented each time 'r' fires; shows in status bar
 }
 
 // New creates the initial Model. snap and labels are the initial channel state
 // and per-channel config labels; initial is the enriched stream list.
-// All are provided by the daemon on connect.
-func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream) Model {
+// stripCfgs describes which strips render as split zones on the main page.
+// reloadFn is called when the user presses 'r'; it re-reads the config file and returns
+// a fresh set of strip configs. May be nil (reload key becomes a no-op).
+func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream, stripCfgs [8]StripConfig, reloadFn func() [8]StripConfig) Model {
 	return Model{
 		disp:            disp,
+		reloadFn:        reloadFn,
 		channels:        snap,
 		labels:          labels,
+		stripCfgs:       stripCfgs,
 		enriched:        sortedByKind(initial),
 		deviceConnected: true, // assume connected until told otherwise
 		ActivePage:      "main",

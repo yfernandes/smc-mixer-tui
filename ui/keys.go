@@ -59,6 +59,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.bindMode {
 			m.disp.Unbind(m.selected)
 		}
+
+	case "r":
+		if !m.bindMode && m.reloadFn != nil {
+			m.stripCfgs = m.reloadFn()
+			m.cfgReloads++
+		}
 	}
 	return m, nil
 }

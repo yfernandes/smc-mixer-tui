@@ -76,7 +76,7 @@ func main() {
 	defer manageCrossfaders.Close(context.Background())
 	manageCrossfaders.Sync(ctx, disp.ActivePage(), disp.Snapshot(), initial)
 
-	srv := daemon.NewServer(disp, configLabels(cfg))
+	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath)
 	srv.BroadcastStreams(initial)
 
 	go func() {

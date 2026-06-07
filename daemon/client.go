@@ -31,9 +31,10 @@ type Client struct {
 
 // InitialState holds the full state sent by the daemon on connection.
 type InitialState struct {
-	Snapshot [8]dispatcher.Channel
-	Streams  []streams.EnrichedStream
-	Labels   [8]string
+	Snapshot   [8]dispatcher.Channel
+	Streams    []streams.EnrichedStream
+	Labels     [8]string
+	ConfigPath string // absolute path to the config file the daemon loaded
 }
 
 // Connect dials the daemon socket and reads the initial state synchronously.
@@ -56,6 +57,7 @@ func Connect() (*Client, InitialState, error) {
 				state.Snapshot = snapFromWire(p.Snapshot)
 				state.Streams = p.Streams
 				state.Labels = p.Labels
+				state.ConfigPath = p.ConfigPath
 			}
 		}
 	}

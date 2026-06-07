@@ -79,11 +79,11 @@ pages:
   main:
     button: none
     faders:
-      0: noise
-      1: spotify
-      2: youtube-music
-      3: firefox
-      4: comms
+      0: spotify
+      1: youtube-music
+      2: firefox
+      3: ~
+      4: ~
       5: ~
       6: ~
       7: master-out

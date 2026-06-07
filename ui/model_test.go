@@ -38,7 +38,7 @@ func (f *fakeDisp) ToggleSolo(ch int) {}
 // — helpers —
 
 func makeModel(d *fakeDisp, ss []streams.EnrichedStream) Model {
-	return New(d, d.snap, [8]string{}, ss)
+	return New(d, d.snap, [8]string{}, ss, [8]StripConfig{}, nil)
 }
 
 // upd sends msg through Update and returns the new Model, discarding the Cmd.
@@ -500,6 +500,53 @@ func TestUpdateMsgRefreshesEnriched(t *testing.T) {
 	m = upd(m, streams.UpdateMsg(newStreams))
 	if len(m.enriched) != 1 || m.enriched[0].Name != "vlc" {
 		t.Errorf("UpdateMsg should refresh enriched list: %v", m.enriched)
+	}
+}
+
+// — config reload ('r' key) —
+
+func TestReloadKeyIncrementsCounter(t *testing.T) {
+	called := 0
+	reloadFn := func() [8]StripConfig {
+		called++
+		return [8]StripConfig{}
+	}
+	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn)
+	m = upd(m, kRune('r'))
+	if m.cfgReloads != 1 {
+		t.Fatalf("cfgReloads = %d after 'r', want 1", m.cfgReloads)
+	}
+	if called != 1 {
+		t.Fatalf("reloadFn called %d times, want 1", called)
+	}
+}
+
+func TestReloadKeyUpdatesStripCfgs(t *testing.T) {
+	want := [8]StripConfig{{IsSplit: true, KnobType: "input"}}
+	reloadFn := func() [8]StripConfig { return want }
+	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn)
+	m = upd(m, kRune('r'))
+	if m.stripCfgs[0].IsSplit != true || m.stripCfgs[0].KnobType != "input" {
+		t.Fatalf("stripCfgs not updated after reload: %+v", m.stripCfgs[0])
+	}
+}
+
+func TestReloadKeyNoopWithNilFn(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil) // reloadFn is nil
+	m = upd(m, kRune('r'))
+	if m.cfgReloads != 0 {
+		t.Fatalf("cfgReloads = %d with nil reloadFn, want 0", m.cfgReloads)
+	}
+}
+
+func TestReloadKeySuppressedInBindMode(t *testing.T) {
+	called := 0
+	reloadFn := func() [8]StripConfig { called++; return [8]StripConfig{} }
+	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn)
+	m.bindMode = true
+	m = upd(m, kRune('r'))
+	if called != 0 {
+		t.Fatalf("reloadFn should not be called in bind mode, called %d times", called)
 	}
 }
 
