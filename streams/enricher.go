@@ -79,7 +79,10 @@ func New(pw *pipewire.Client) *Enricher {
 func (e *Enricher) SetBlacklist(names []string) {
 	m := make(map[string]struct{}, len(names))
 	for _, n := range names {
-		m[strings.ToLower(n)] = struct{}{}
+		pattern := strings.ToLower(strings.TrimSpace(n))
+		if pattern != "" {
+			m[pattern] = struct{}{}
+		}
 	}
 	e.blacklist = m
 }
@@ -102,25 +105,30 @@ func (e *Enricher) Enrich(ctx context.Context) ([]EnrichedStream, error) {
 	for _, s := range pwStreams {
 		out = append(out, enrichStreamIdentity(s, hyprByPID, mprisByPID))
 	}
-	if len(e.blacklist) > 0 {
-		filtered := out[:0]
-		for _, es := range out {
-			lower := strings.ToLower(es.Name)
-			blocked := false
-			for pattern := range e.blacklist {
-				if strings.Contains(lower, pattern) {
-					blocked = true
-					break
-				}
-			}
-			if !blocked {
-				filtered = append(filtered, es)
-			}
-		}
-		out = filtered
-	}
+	return filterBlacklisted(out, e.blacklist), nil
+}
 
-	return out, nil
+func filterBlacklisted(streams []EnrichedStream, blacklist map[string]struct{}) []EnrichedStream {
+	if len(blacklist) == 0 {
+		return streams
+	}
+	filtered := streams[:0]
+	for _, es := range streams {
+		if !blacklistMatches(es.Name, blacklist) {
+			filtered = append(filtered, es)
+		}
+	}
+	return filtered
+}
+
+func blacklistMatches(name string, blacklist map[string]struct{}) bool {
+	lower := strings.ToLower(name)
+	for pattern := range blacklist {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func hyprWindowsByPID(windows []hyprWindow) map[uint32]hyprWindow {

@@ -17,6 +17,8 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
+const initialReadTimeout = 5 * time.Second
+
 // Client connects to a running daemon and implements the ui.Dispatcher interface.
 // The daemon pushes state changes; Bind/Unbind commands are forwarded over the socket.
 type Client struct {
@@ -45,21 +47,13 @@ func Connect() (*Client, InitialState, error) {
 		return nil, InitialState{}, fmt.Errorf("connect to daemon: %w", err)
 	}
 
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(initialReadTimeout))
 
 	scanner := bufio.NewScanner(conn)
-	var state InitialState
-
-	if scanner.Scan() {
-		if env, err := decodeEnvelope(scanner.Bytes()); err == nil && env.Kind == kindInitial {
-			var p initialPayload
-			if err := json.Unmarshal(env.Data, &p); err == nil {
-				state.Snapshot = snapFromWire(p.Snapshot)
-				state.Streams = p.Streams
-				state.Labels = p.Labels
-				state.ConfigPath = p.ConfigPath
-			}
-		}
+	state, err := readInitialState(scanner)
+	if err != nil {
+		conn.Close()
+		return nil, InitialState{}, err
 	}
 
 	conn.SetReadDeadline(time.Time{})
@@ -70,6 +64,34 @@ func Connect() (*Client, InitialState, error) {
 		snap:    state.Snapshot,
 	}
 	return c, state, nil
+}
+
+func readInitialState(scanner *bufio.Scanner) (InitialState, error) {
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return InitialState{}, fmt.Errorf("read initial state: %w", err)
+		}
+		return InitialState{}, fmt.Errorf("read initial state: connection closed")
+	}
+
+	env, err := decodeEnvelope(scanner.Bytes())
+	if err != nil {
+		return InitialState{}, err
+	}
+	if env.Kind != kindInitial {
+		return InitialState{}, fmt.Errorf("read initial state: got %q frame", env.Kind)
+	}
+
+	var p initialPayload
+	if err := json.Unmarshal(env.Data, &p); err != nil {
+		return InitialState{}, fmt.Errorf("decode initial state: %w", err)
+	}
+	return InitialState{
+		Snapshot:   snapFromWire(p.Snapshot),
+		Streams:    p.Streams,
+		Labels:     p.Labels,
+		ConfigPath: p.ConfigPath,
+	}, nil
 }
 
 // ConnectWithRetry dials the daemon socket, retrying until timeout elapses.

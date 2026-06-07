@@ -27,7 +27,7 @@ func errPW(msg string) func(context.Context) ([]pipewire.Stream, error) {
 	return func(context.Context) ([]pipewire.Stream, error) { return nil, errors.New(msg) }
 }
 
-func noHypr(_ context.Context) ([]hyprWindow, error)  { return nil, nil }
+func noHypr(_ context.Context) ([]hyprWindow, error)   { return nil, nil }
 func noMPRIS(_ context.Context) ([]mprisPlayer, error) { return nil, nil }
 
 // — join logic —
@@ -170,6 +170,46 @@ func TestEnrichPipeWireErrorPropagates(t *testing.T) {
 	_, err := e.Enrich(context.Background())
 	if err == nil {
 		t.Fatal("PipeWire error must propagate")
+	}
+}
+
+func TestEnrichBlacklistFiltersFinalDisplayName(t *testing.T) {
+	e := &Enricher{
+		pw: fakePW([]pipewire.Stream{
+			{ID: 1, Name: "pavucontrol", PID: 10},
+			{ID: 2, Name: "Firefox", PID: 20},
+			{ID: 3, Name: "Loopback Monitor", PID: 30},
+		}),
+		hypr:  noHypr,
+		mpris: noMPRIS,
+	}
+	e.SetBlacklist([]string{" PAVU ", "loopback"})
+
+	ss, err := e.Enrich(context.Background())
+	if err != nil {
+		t.Fatalf("Enrich() error = %v", err)
+	}
+	if len(ss) != 1 || ss[0].Name != "Firefox" {
+		t.Fatalf("blacklist result = %+v, want only Firefox", ss)
+	}
+}
+
+func TestSetBlacklistIgnoresEmptyPatterns(t *testing.T) {
+	e := &Enricher{
+		pw: fakePW([]pipewire.Stream{
+			{ID: 1, Name: "Firefox", PID: 20},
+		}),
+		hypr:  noHypr,
+		mpris: noMPRIS,
+	}
+	e.SetBlacklist([]string{"", "   "})
+
+	ss, err := e.Enrich(context.Background())
+	if err != nil {
+		t.Fatalf("Enrich() error = %v", err)
+	}
+	if len(ss) != 1 || ss[0].Name != "Firefox" {
+		t.Fatalf("empty blacklist patterns should not filter streams: %+v", ss)
 	}
 }
 
