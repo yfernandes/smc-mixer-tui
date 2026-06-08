@@ -16,7 +16,7 @@ func clearPageAssignments(disp *dispatcher.Dispatcher) {
 			continue
 		}
 		if c.StreamID != nil {
-			disp.LoseBinding(ch)
+			disp.ResetStrip(ch)
 		}
 	}
 }

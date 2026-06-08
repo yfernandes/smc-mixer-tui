@@ -111,6 +111,36 @@ func (d *Dispatcher) LoseBinding(ch int) {
 	}
 }
 
+// ResetStrip clears the stream binding AND all button states (Mute, Solo, Stop, Rec)
+// for a channel, then syncs all LEDs. Use on page switch, where the strip is about
+// to control a different device and stale button state would be misleading.
+func (d *Dispatcher) ResetStrip(ch int) {
+	d.mu.Lock()
+	d.channels[ch].clearBinding()
+	d.channels[ch].Mute = false
+	d.channels[ch].SoloMuted = false
+	d.channels[ch].Solo = false
+	d.channels[ch].Stop = false
+	d.channels[ch].Advanced = false
+	d.channels[ch].advancedSpec = nil
+	oldCancel := d.advancedCancels[ch]
+	d.advancedCancels[ch] = nil
+	d.blinkGen[ch]++
+	leds := d.leds
+	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
+	d.mu.Unlock()
+	if oldCancel != nil {
+		oldCancel()
+	}
+	if leds != nil {
+		leds.SetFaderLED(ch, false)
+		leds.SetButtonLED(ch, midi.ButtonMute, false)
+		leds.SetButtonLED(ch, midi.ButtonSolo, false)
+		leds.SetButtonLED(ch, midi.ButtonStop, false)
+		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
+	}
+}
+
 // BindKnob sets the PipeWire node that this channel's knob controls for gain writes.
 // Used on the main page where knob and fader target independent devices.
 func (d *Dispatcher) BindKnob(ch int, id uint32) {
