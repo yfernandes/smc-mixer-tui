@@ -57,6 +57,11 @@ func renderBtnFocused(label string, active bool, on lipgloss.Style, focused bool
 	return btnInactive.Render(s)
 }
 
+// knobPct converts a raw MIDI knob value (0–127) to a 0–100 percentage.
+func knobPct(knob int) int {
+	return int(math.Round(float64(knob) / 127.0 * 100))
+}
+
 // faderBar returns a horizontal bar of width chars representing val (0.0–1.0).
 func faderBar(val float64, width int) string {
 	filled := max(0, min(width, int(math.Round(val*float64(width)))))

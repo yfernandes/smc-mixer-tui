@@ -112,7 +112,7 @@ func (m Model) renderSplitStrip(ch int) string {
 		knobValLine = truncate(crossfaderLabel(c.CrossSinkAName, c.CrossSinkBName), innerW)
 		knobBarLine = crossfadeBar(c.Knob, innerW+1)
 	} else {
-		knobValLine = fmt.Sprintf("○%3d ", c.Knob) + faderBar(float64(c.Knob)/127.0, innerW-5)
+		knobValLine = fmt.Sprintf("○%3d%%", knobPct(c.Knob)) + faderBar(float64(c.Knob)/127.0, innerW-5)
 	}
 
 	faderHeader, faderLabelStr := splitFaderHeader(ch, cfg, c, state)
@@ -210,7 +210,7 @@ func knobRows(c dispatcher.Channel) (line, bar string) {
 		return truncate(crossfaderLabel(c.CrossSinkAName, c.CrossSinkBName), leftW+rightW),
 			crossfadeBar(c.Knob, knobBarW+1)
 	}
-	return fmt.Sprintf("◎%4d", c.Knob), faderBar(float64(c.Knob)/127.0, knobBarW+1)
+	return fmt.Sprintf("◎%3d%%", knobPct(c.Knob)), faderBar(float64(c.Knob)/127.0, knobBarW+1)
 }
 
 func (m Model) stripHeader(ch int, c dispatcher.Channel, es *streams.EnrichedStream, state channelState, focusedNav bool) (header, nameLine, subLine string) {
