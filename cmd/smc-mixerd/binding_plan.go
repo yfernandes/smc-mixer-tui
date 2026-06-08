@@ -13,8 +13,9 @@ type bindingAction struct {
 	name      string
 	kind      audio.NodeKind
 	mprisName string
-	lose      bool // if true: lose binding only, all other fields ignored
-	syncSpec  bool // if true: sync advancedSpec for an unchanged live binding
+	lose      bool      // if true: lose binding only, all other fields ignored
+	syncSpec  bool      // if true: sync advancedSpec for an unchanged live binding
+	userBound bool      // if true: apply via UserBind (PID-based reconnect)
 }
 
 func planBindings(cfg *config.Config, activePage string, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) []bindingAction {
@@ -32,6 +33,24 @@ func planChannelBinding(cfg *config.Config, activePage string, ch int, current d
 	live := channelBindingLive(current, ss)
 	if shouldPreserveBinding(activePage, current, live) {
 		return bindingAction{}, false
+	}
+
+	// PID-based reconnect: when a user-bound stream dies, reattach to the first new
+	// stream from the same process (e.g. browser tab switching videos).
+	if !live && current.BoundPID != 0 && !current.ManuallyUnbound {
+		for i := range ss {
+			if ss[i].PID == current.BoundPID {
+				s := ss[i]
+				return bindingAction{
+					ch:        ch,
+					id:        s.ID,
+					name:      s.Name,
+					kind:      s.Kind,
+					mprisName: mprisName(s),
+					userBound: true,
+				}, true
+			}
+		}
 	}
 
 	dev := cfg.ChannelForPage(activePage, ch)

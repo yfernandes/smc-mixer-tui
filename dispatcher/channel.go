@@ -36,6 +36,7 @@ func (c *Channel) bind(b streamBinding) {
 	c.Synced = false
 	c.Stop = false
 	c.UserBound = false
+	c.BoundPID = 0 // cleared by config-driven binds; UserBind sets it after calling bind()
 }
 
 func (c *Channel) clearBinding() {
@@ -47,6 +48,8 @@ func (c *Channel) clearBinding() {
 	c.LastSetVol = -1
 	c.Stop = false
 	c.UserBound = false
+	// BoundPID intentionally preserved: if the stream died, the next stream from the
+	// same process should be reattached automatically (planChannelBinding checks this).
 }
 
 func (c Channel) boundID() (uint32, bool) {

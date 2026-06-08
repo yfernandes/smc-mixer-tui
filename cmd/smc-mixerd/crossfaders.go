@@ -15,11 +15,12 @@ import (
 )
 
 type crossfaderManager struct {
-	mu     sync.Mutex
-	cfg    *config.Config
-	pw     *pipewire.Client
-	disp   *dispatcher.Dispatcher
-	active [8]*crossfaderState
+	mu          sync.Mutex
+	cfg         *config.Config
+	pw          *pipewire.Client
+	disp        *dispatcher.Dispatcher
+	active      [8]*crossfaderState
+	sinksLogged [8]bool // true after "sinks not found" has been logged; cleared when sinks are found
 }
 
 type crossfaderState struct {
@@ -89,9 +90,13 @@ func (m *crossfaderManager) syncChannel(ctx context.Context, ch int, channel dis
 	}
 	sinkA, sinkB, _, _ := resolveCrossfaderSinks(m.cfg, knob, ss)
 	if sinkA == "" || sinkB == "" {
-		log.Printf("crossfader ch%d: sinks not found (A=%q B=%q)", ch, knob.BusA, knob.BusB)
+		if !m.sinksLogged[ch] {
+			log.Printf("crossfader ch%d: sinks not found (A=%q B=%q), will retry when available", ch, knob.BusA, knob.BusB)
+			m.sinksLogged[ch] = true
+		}
 		return
 	}
+	m.sinksLogged[ch] = false
 	m.setupChannel(ctx, ch, *streamID, knob, ss)
 }
 

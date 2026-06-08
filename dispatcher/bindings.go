@@ -28,6 +28,7 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 		mprisName: mprisName,
 	})
 	leds := d.leds
+	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
 	d.mu.Unlock()
 
 	if leds != nil {
@@ -37,13 +38,16 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 		}
 		leds.SetFaderLED(ch, false) // off until fader reaches zero
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
+		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
 }
 
 // UserBind assigns a PipeWire stream to a channel strip in response to an explicit
 // user action. Behaves like Bind but sets UserBound=true so planBindings will not
 // override this slot with a config-driven stream while the stream is live.
-func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
+// pid is the OS process ID of the stream; when non-zero it is stored as BoundPID so
+// that if the stream dies a new stream from the same process is reattached automatically.
+func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32) {
 	d.mu.Lock()
 	var evicted []int
 	for i := range d.channels {
@@ -60,7 +64,9 @@ func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKin
 		mprisName: mprisName,
 	})
 	d.channels[ch].UserBound = true
+	d.channels[ch].BoundPID = pid
 	leds := d.leds
+	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
 	d.mu.Unlock()
 
 	if leds != nil {
@@ -70,6 +76,7 @@ func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKin
 		}
 		leds.SetFaderLED(ch, false)
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
+		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
 }
 
@@ -99,7 +106,7 @@ func (d *Dispatcher) LoseBinding(ch int) {
 	d.advancedCancels[ch] = nil
 	d.blinkGen[ch]++
 	leds := d.leds
-	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
+	rLED := d.channels[ch].Rec // Pinned excluded: stream is offline, LED turns off until rebind
 	d.mu.Unlock()
 	if oldCancel != nil {
 		oldCancel()
@@ -117,6 +124,7 @@ func (d *Dispatcher) LoseBinding(ch int) {
 func (d *Dispatcher) ResetStrip(ch int) {
 	d.mu.Lock()
 	d.channels[ch].clearBinding()
+	d.channels[ch].BoundPID = 0
 	d.channels[ch].Mute = false
 	d.channels[ch].SoloMuted = false
 	d.channels[ch].Solo = false
@@ -143,11 +151,24 @@ func (d *Dispatcher) ResetStrip(ch int) {
 
 // BindKnob sets the PipeWire node that this channel's knob controls for gain writes.
 // Used on the main page where knob and fader target independent devices.
-func (d *Dispatcher) BindKnob(ch int, id uint32) {
+// Returns true if the binding was new or changed.
+func (d *Dispatcher) BindKnob(ch int, id uint32) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.channels[ch].KnobStreamID != nil && *d.channels[ch].KnobStreamID == id {
+		return false
+	}
 	idCopy := id
 	d.channels[ch].KnobStreamID = &idCopy
+	return true
+}
+
+// SetKnob sets the accumulated knob position for channel ch.
+// Use to seed the position from an externally-known volume (e.g. at startup).
+func (d *Dispatcher) SetKnob(ch int, val int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.channels[ch].Knob = clampKnob(val)
 }
 
 // LoseKnob clears the knob's independent device binding.
@@ -162,6 +183,7 @@ func (d *Dispatcher) LoseKnob(ch int) {
 func (d *Dispatcher) Unbind(ch int) {
 	d.mu.Lock()
 	d.channels[ch].clearBinding()
+	d.channels[ch].BoundPID = 0
 	d.channels[ch].ManuallyUnbound = true
 	d.channels[ch].Advanced = false
 	d.channels[ch].advancedSpec = nil

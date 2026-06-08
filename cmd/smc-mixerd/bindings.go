@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -15,13 +17,11 @@ func clearPageAssignments(disp *dispatcher.Dispatcher) {
 		if c.ManuallyUnbound || c.Pinned {
 			continue
 		}
-		if c.StreamID != nil {
-			disp.ResetStrip(ch)
-		}
+		disp.ResetStrip(ch)
 	}
 }
 
-func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream, pinnedKeys map[int]string) {
+func applyBindings(ctx context.Context, cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream, pinnedKeys map[int]string, getVol knobVolumeGetter) {
 	clearStaleBindings(disp, ss)
 	activePage := disp.ActivePage()
 	// Sync pinned flags before planning so planBindings can skip already-live pinned slots.
@@ -34,13 +34,19 @@ func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams
 			// Stream already matched; only refresh config-derived metadata.
 			dev := cfg.ChannelForPage(activePage, action.ch)
 			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
+		case action.userBound:
+			// PID-based reconnect: preserve UserBound semantics across stream restarts.
+			snap := disp.Snapshot()
+			disp.UserBind(action.ch, action.id, action.name, action.kind, action.mprisName, snap[action.ch].BoundPID)
+			dev := cfg.ChannelForPage(activePage, action.ch)
+			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
 		default:
 			disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
 			dev := cfg.ChannelForPage(activePage, action.ch)
 			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
 		}
 	}
-	applyKnobBindings(cfg, disp, activePage, ss)
+	applyKnobBindings(ctx, cfg, disp, activePage, ss, getVol)
 	refreshBindingMetadata(disp, ss)
 }
 

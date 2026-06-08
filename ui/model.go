@@ -14,7 +14,7 @@ import (
 // Dispatcher is the subset of dispatcher.Dispatcher used by the TUI.
 type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
-	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string)
+	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32)
 	Unbind(ch int)
 	ToggleMute(ch int)
 	ToggleSolo(ch int)

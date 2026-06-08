@@ -219,7 +219,7 @@ func (cmd clientCommand) apply(ctx context.Context, s *Server) {
 	switch cmd.kind {
 	case kindBind:
 		p := cmd.bind
-		s.disp.UserBind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName)
+		s.disp.UserBind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName, p.PID)
 	case kindUnbind:
 		s.disp.Unbind(cmd.ch)
 	case kindMute:

@@ -85,16 +85,16 @@ func TestApplyBindingsRefreshesMPRISForLiveBinding(t *testing.T) {
 	cfg := testConfig(config.BindPlayback, "spotify")
 	disp := dispatcher.New(newNoopPW())
 
-	applyBindings(cfg, disp, []streams.EnrichedStream{
+	applyBindings(context.Background(), cfg, disp, []streams.EnrichedStream{
 		stream(20, "Spotify", "spotify", audio.KindSource),
-	}, nil)
+	}, nil, nil)
 	if got := disp.Snapshot()[0].MPRISName; got != "" {
 		t.Fatalf("initial MPRISName = %q, want empty", got)
 	}
 
-	applyBindings(cfg, disp, []streams.EnrichedStream{
+	applyBindings(context.Background(), cfg, disp, []streams.EnrichedStream{
 		mprisStream(20, "spotify", audio.KindSource),
-	}, nil)
+	}, nil, nil)
 
 	if got := disp.Snapshot()[0].MPRISName; got != "spotify" {
 		t.Fatalf("refreshed MPRISName = %q, want spotify", got)
@@ -260,7 +260,7 @@ func TestPageSwitchClearsStaleCrossPageBinding(t *testing.T) {
 	}
 
 	clearPageAssignments(disp)
-	applyBindings(cfg, disp, ss, map[int]string{})
+	applyBindings(context.Background(), cfg, disp, ss, map[int]string{}, nil)
 
 	if got := disp.Snapshot()[1].StreamID; got != nil {
 		t.Fatalf("ch1 should be unbound after page switch, got stream %d", *got)
@@ -357,9 +357,9 @@ func TestApplyKnobBindingsBindsMainPageGainKnob(t *testing.T) {
 	}
 	disp := dispatcher.New(newNoopPW())
 
-	applyKnobBindings(cfg, disp, "main", []streams.EnrichedStream{
+	applyKnobBindings(context.Background(), cfg, disp, "main", []streams.EnrichedStream{
 		stream(20, "Spotify", "spotify", audio.KindSource),
-	})
+	}, nil)
 
 	got := disp.Snapshot()[0].KnobStreamID
 	if got == nil || *got != 20 {
@@ -373,9 +373,9 @@ func TestApplyKnobBindingsClearsOutsideMainPage(t *testing.T) {
 	disp.BindKnob(0, 20)
 	disp.OnGlobal(midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
 
-	applyKnobBindings(cfg, disp, disp.ActivePage(), []streams.EnrichedStream{
+	applyKnobBindings(context.Background(), cfg, disp, disp.ActivePage(), []streams.EnrichedStream{
 		stream(20, "Spotify", "spotify", audio.KindSource),
-	})
+	}, nil)
 
 	if got := disp.Snapshot()[0].KnobStreamID; got != nil {
 		t.Fatalf("KnobStreamID = %v outside main page, want nil", *got)
@@ -400,9 +400,9 @@ func TestApplyKnobBindingsBindsOutputKnobWithNoneDefault(t *testing.T) {
 	}
 	disp := dispatcher.New(newNoopPW())
 
-	applyKnobBindings(cfg, disp, "main", []streams.EnrichedStream{
+	applyKnobBindings(context.Background(), cfg, disp, "main", []streams.EnrichedStream{
 		stream(42, "WH-1000XM4 Analog Stereo", "alsa_output.usb", audio.KindSink),
-	})
+	}, nil)
 
 	got := disp.Snapshot()[6].KnobStreamID
 	if got == nil || *got != 42 {
@@ -430,6 +430,52 @@ func TestKnobBindingCandidateSkipsSendKnob(t *testing.T) {
 
 	if got != nil {
 		t.Fatalf("send knob should not bind as gain knob, got %+v", *got)
+	}
+}
+
+func TestPlanBindingsPIDRebindWhenStreamDies(t *testing.T) {
+	// Simulate a user-bound stream that has died (StreamID cleared) but BoundPID is set.
+	// A new stream from the same process should be reattached.
+	cfg := &config.Config{} // no config for ch0 — pure user-bound scenario
+	snap := [8]dispatcher.Channel{}
+	snap[0].BoundPID = 1234 // previous stream's PID; StreamID is nil (stream died)
+
+	ss := []streams.EnrichedStream{
+		{ID: 99, Name: "Firefox", BindKey: "firefox", Kind: audio.KindSource, PID: 1234},
+	}
+
+	actions := planBindings(cfg, "main", snap, ss)
+
+	if len(actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(actions))
+	}
+	if !actions[0].userBound {
+		t.Fatalf("PID-based rebind should have userBound=true, got %+v", actions[0])
+	}
+	if actions[0].id != 99 {
+		t.Fatalf("PID-based rebind should bind stream 99, got %+v", actions[0])
+	}
+}
+
+func TestPlanBindingsPIDRebindNotTriggeredWhenLive(t *testing.T) {
+	// If the original stream is still alive, BoundPID must not cause a spurious rebind.
+	cfg := &config.Config{}
+	snap := [8]dispatcher.Channel{}
+	id := uint32(50)
+	snap[0].StreamID = &id
+	snap[0].BoundPID = 1234
+	snap[0].UserBound = true
+
+	ss := []streams.EnrichedStream{
+		{ID: 50, Name: "Firefox", BindKey: "firefox", Kind: audio.KindSource, PID: 1234},
+	}
+
+	actions := planBindings(cfg, "main", snap, ss)
+
+	for _, a := range actions {
+		if a.id != 0 && !a.syncSpec && !a.lose {
+			t.Fatalf("live user-bound channel should not be rebound, got %+v", a)
+		}
 	}
 }
 

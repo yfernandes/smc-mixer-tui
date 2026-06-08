@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"sync"
@@ -73,7 +74,7 @@ func main() {
 		nowPinned := pinned.toggle(cfg, ch, key)
 		disp.SetPinned(ch, nowPinned)
 	})
-	applyBindings(cfg, disp, initial, pinned.snapshot())
+	applyBindings(ctx, cfg, disp, initial, pinned.snapshot(), pw.GetVolume)
 
 	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
 	defer manageCrossfaders.Close(context.Background())
@@ -105,7 +106,7 @@ func main() {
 	go disp.Run(ctx, dispCh)
 	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, midiCh)
 	go runVolumePoller(ctx, pw, disp, srv)
-	go pollStreams(ctx, enricher, cfg, disp, srv, pinned, manageCrossfaders.Sync, rebindCh)
+	go pollStreams(ctx, enricher, cfg, disp, srv, pinned, manageCrossfaders.Sync, rebindCh, pw.GetVolume)
 
 	<-ctx.Done()
 }
@@ -129,13 +130,9 @@ func routeMIDI(midiCh <-chan midi.Msg, dispCh chan<- midi.Msg, srv *daemon.Serve
 func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Server, disp *dispatcher.Dispatcher, midiCh chan<- midi.Msg) {
 	defer close(midiCh)
 	for {
-		dev := fixedDevice
-		if dev == "" {
-			var ok bool
-			dev, ok = waitForMIDIDevice(ctx, srv)
-			if !ok {
-				return
-			}
+		dev, ok := waitForMIDIDevice(ctx, fixedDevice, srv)
+		if !ok {
+			return
 		}
 
 		log.Printf("MIDI device: %s", dev)
@@ -174,12 +171,20 @@ func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Serv
 	}
 }
 
-func waitForMIDIDevice(ctx context.Context, srv *daemon.Server) (string, bool) {
+// waitForMIDIDevice blocks until a MIDI device is available and returns its path.
+// If fixedDevice is set, it polls that path directly; otherwise it auto-detects
+// an SMC device. Broadcasts Connected:false once before the first poll attempt.
+func waitForMIDIDevice(ctx context.Context, fixedDevice string, srv *daemon.Server) (string, bool) {
 	srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: false})
 	for {
-		dev, err := midi.FindDevice("SMC")
-		if err == nil {
-			return dev, true
+		if fixedDevice != "" {
+			if _, err := os.Stat(fixedDevice); err == nil {
+				return fixedDevice, true
+			}
+		} else {
+			if dev, err := midi.FindDevice("SMC"); err == nil {
+				return dev, true
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -208,18 +213,23 @@ func pollChannelVolumes(ctx context.Context, pw *pipewire.Client, disp *dispatch
 	snap := disp.Snapshot()
 	changed := false
 	for ch, c := range snap {
-		if c.StreamID == nil {
-			continue
+		if c.StreamID != nil {
+			vol, _, err := pw.GetVolume(ctx, *c.StreamID)
+			if err == nil {
+				disp.UpdateActualVolume(ch, vol)
+				if c.MPRISName != "" {
+					disp.UpdatePlaybackStatus(ch, streams.IsPlaying(ctx, c.MPRISName))
+				}
+				changed = true
+			}
 		}
-		vol, _, err := pw.GetVolume(ctx, *c.StreamID)
-		if err != nil {
-			continue
+		if c.KnobStreamID != nil {
+			vol, _, err := pw.GetVolume(ctx, *c.KnobStreamID)
+			if err == nil {
+				disp.SetKnob(ch, int(math.Round(vol*127)))
+				changed = true
+			}
 		}
-		disp.UpdateActualVolume(ch, vol)
-		if c.MPRISName != "" {
-			disp.UpdatePlaybackStatus(ch, streams.IsPlaying(ctx, c.MPRISName))
-		}
-		changed = true
 	}
 	return changed
 }
@@ -233,10 +243,12 @@ func pollStreams(
 	pinned *pinnedState,
 	manageCrossfaders func(context.Context, [8]dispatcher.Channel, []streams.EnrichedStream),
 	rebindCh <-chan struct{},
+	getVol knobVolumeGetter,
 ) {
 	var (
-		lastMu sync.Mutex
-		lastSS []streams.EnrichedStream
+		lastMu  sync.Mutex
+		lastSS  []streams.EnrichedStream
+		bindMu  sync.Mutex // serialises clearPageAssignments+applyBindings vs enricher applyBindings
 	)
 
 	// Listen for immediate-rebind triggers from page switches.
@@ -252,10 +264,12 @@ func pollStreams(
 				if ss == nil {
 					continue
 				}
+				bindMu.Lock()
 				clearPageAssignments(disp)
-				applyBindings(cfg, disp, ss, pinned.snapshot())
+				applyBindings(ctx, cfg, disp, ss, pinned.snapshot(), getVol)
 				manageCrossfaders(ctx, disp.Snapshot(), ss)
 				srv.BroadcastSnapshot(disp.Snapshot())
+				bindMu.Unlock()
 			}
 		}
 	}()
@@ -265,10 +279,12 @@ func pollStreams(
 		lastMu.Lock()
 		lastSS = ss
 		lastMu.Unlock()
-		applyBindings(cfg, disp, ss, pinned.snapshot())
+		bindMu.Lock()
+		applyBindings(ctx, cfg, disp, ss, pinned.snapshot(), getVol)
 		manageCrossfaders(ctx, disp.Snapshot(), ss)
 		srv.BroadcastStreams(ss)
 		srv.BroadcastSnapshot(disp.Snapshot())
+		bindMu.Unlock()
 	})
 }
 

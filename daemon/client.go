@@ -128,8 +128,8 @@ func (c *Client) Snapshot() [8]dispatcher.Channel {
 }
 
 // Bind forwards a bind command to the daemon. Implements ui.Dispatcher.
-func (c *Client) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string) {
-	c.send(kindBind, bindPayload{Ch: ch, ID: id, Name: name, Kind: kind, MPRISName: mprisName})
+func (c *Client) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32) {
+	c.send(kindBind, bindPayload{Ch: ch, ID: id, Name: name, Kind: kind, MPRISName: mprisName, PID: pid})
 }
 
 // Unbind forwards an unbind command to the daemon. Implements ui.Dispatcher.

@@ -43,6 +43,7 @@ type MPRISCaller interface {
 // Channel holds the runtime state for one mixer channel strip.
 type Channel struct {
 	StreamID        *uint32        // nil if unbound
+	BoundPID        uint32         // OS PID of the last user-bound stream; 0 if none. Survives stream death so the next stream from the same process is reattached.
 	ManuallyUnbound bool           // user explicitly unbound this channel; suppresses config auto-rebind
 	UserBound       bool           // user explicitly bound this channel; suppresses config rebind while stream is live
 	Name            string         // display name; "" if unbound

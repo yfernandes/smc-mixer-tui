@@ -168,6 +168,7 @@ type bindPayload struct {
 	Name      string         `json:"name"`
 	Kind      audio.NodeKind `json:"kind"`
 	MPRISName string         `json:"mpris_name"`
+	PID       uint32         `json:"pid,omitempty"`
 }
 
 type unbindPayload struct {
