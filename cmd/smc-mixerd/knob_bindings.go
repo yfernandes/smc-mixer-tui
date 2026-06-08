@@ -23,11 +23,17 @@ func knobBindingCandidate(cfg *config.Config, activePage string, ch int, ss []st
 		return nil
 	}
 	knob, ok := cfg.KnobFor(ch)
-	if !ok || knob.Type != config.KnobGain {
+	if !ok {
 		return nil
 	}
 	dev := cfg.KnobDeviceFor(ch)
 	if dev == nil {
+		return nil
+	}
+	// Output devices placed in a knob slot default to KnobNone but the user's
+	// intent is volume control. KnobSend (crossfade) is handled separately.
+	isGain := knob.Type == config.KnobGain || (dev.IsOutput() && knob.Type == config.KnobNone)
+	if !isGain {
 		return nil
 	}
 	return bindingCandidate(newStreamMatcher(dev), ss)

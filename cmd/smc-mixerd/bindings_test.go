@@ -318,6 +318,34 @@ func TestApplyKnobBindingsClearsOutsideMainPage(t *testing.T) {
 	}
 }
 
+func TestApplyKnobBindingsBindsOutputKnobWithNoneDefault(t *testing.T) {
+	cfg := &config.Config{
+		Devices: map[string]config.DeviceConfig{
+			"headphones": {
+				Type:  config.BindOutput,
+				Match: "WH-1000XM4",
+				// No Knob override; defaults to output-knob which is KnobNone.
+			},
+		},
+		Defaults: config.DefaultsConfig{
+			OutputKnob: config.KnobConfig{Type: config.KnobNone},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Knobs: map[int]*string{6: sp("headphones")}},
+		},
+	}
+	disp := dispatcher.New(newNoopPW())
+
+	applyKnobBindings(cfg, disp, "main", []streams.EnrichedStream{
+		stream(42, "WH-1000XM4 Analog Stereo", "alsa_output.usb", audio.KindSink),
+	})
+
+	got := disp.Snapshot()[6].KnobStreamID
+	if got == nil || *got != 42 {
+		t.Fatalf("KnobStreamID = %v, want 42; output device in knob slot should bind for gain", got)
+	}
+}
+
 func TestKnobBindingCandidateSkipsSendKnob(t *testing.T) {
 	cfg := &config.Config{
 		Devices: map[string]config.DeviceConfig{
