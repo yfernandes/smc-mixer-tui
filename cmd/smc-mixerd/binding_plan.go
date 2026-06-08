@@ -59,10 +59,10 @@ func planChannelBinding(cfg *config.Config, activePage string, ch int, current d
 			mprisName: mprisName(*s),
 		}, true
 	}
-	// Stream is live but enrichment (MPRIS/Hyprland) no longer matches the config
-	// pattern — e.g. a browser stream moved to a null sink whose MPRIS identity
-	// briefly reverts to its raw PipeWire name. Preserve the binding: evicting a
-	// live stream with no replacement causes a teardown/rebuild loop.
+	// No replacement found. Preserve any live binding to handle transient enrichment
+	// gaps on the same page (e.g. MPRIS identity briefly reverts after stream routing
+	// changes). Cross-page stale bindings are cleared before planBindings is called
+	// on a page switch, so a live-but-unmatched binding here is always same-page.
 	return bindingAction{}, false
 }
 

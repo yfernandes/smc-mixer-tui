@@ -252,6 +252,7 @@ func pollStreams(
 				if ss == nil {
 					continue
 				}
+				clearPageAssignments(disp)
 				applyBindings(cfg, disp, ss, pinned.snapshot())
 				manageCrossfaders(ctx, disp.Snapshot(), ss)
 				srv.BroadcastSnapshot(disp.Snapshot())

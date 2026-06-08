@@ -6,6 +6,21 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
+// clearPageAssignments removes all strip-to-stream assignments that are not
+// manually pinned or manually unbound. Called on page switch so the incoming
+// page starts from a clean slate. PipeWire routing is not touched.
+func clearPageAssignments(disp *dispatcher.Dispatcher) {
+	snap := disp.Snapshot()
+	for ch, c := range snap {
+		if c.ManuallyUnbound || c.Pinned {
+			continue
+		}
+		if c.StreamID != nil {
+			disp.LoseBinding(ch)
+		}
+	}
+}
+
 func applyBindings(cfg *config.Config, disp *dispatcher.Dispatcher, ss []streams.EnrichedStream, pinnedKeys map[int]string) {
 	clearStaleBindings(disp, ss)
 	activePage := disp.ActivePage()

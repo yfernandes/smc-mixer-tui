@@ -238,6 +238,70 @@ func TestPlanBindingsPreservesPinnedMainPageLiveBinding(t *testing.T) {
 	}
 }
 
+// Regression: switching from outputs page (ch1=headphones, KindSink) to main page
+// (ch1=youtube-music, KindSource) must clear the sink binding even when
+// youtube-music is not currently playing. The fix lives in clearPageAssignments,
+// not in planBindings, so the test exercises both together as the page-switch
+// handler does.
+func TestPageSwitchClearsStaleCrossPageBinding(t *testing.T) {
+	cfg := &config.Config{
+		Devices: map[string]config.DeviceConfig{
+			"youtube-music": {Type: config.BindPlayback, Match: "youtube"},
+		},
+		Pages: map[string]config.PageConfig{
+			"main": {Faders: map[int]*string{1: sp("youtube-music")}},
+		},
+	}
+	disp := dispatcher.New(newNoopPW())
+	disp.Bind(1, 99, "WH-1000XM4 Analog Stereo", audio.KindSink, "")
+
+	ss := []streams.EnrichedStream{
+		stream(99, "WH-1000XM4 Analog Stereo", "alsa_output.usb", audio.KindSink),
+	}
+
+	clearPageAssignments(disp)
+	applyBindings(cfg, disp, ss, map[int]string{})
+
+	if got := disp.Snapshot()[1].StreamID; got != nil {
+		t.Fatalf("ch1 should be unbound after page switch, got stream %d", *got)
+	}
+}
+
+func TestClearPageAssignmentsClearsLiveBindings(t *testing.T) {
+	disp := dispatcher.New(newNoopPW())
+	disp.Bind(1, 99, "WH-1000XM4", audio.KindSink, "")
+
+	clearPageAssignments(disp)
+
+	if got := disp.Snapshot()[1].StreamID; got != nil {
+		t.Fatalf("clearPageAssignments should clear ch1, got %d", *got)
+	}
+}
+
+func TestClearPageAssignmentsPreservesPinned(t *testing.T) {
+	disp := dispatcher.New(newNoopPW())
+	disp.Bind(0, 10, "Spotify", audio.KindSource, "")
+	disp.SetPinned(0, true)
+
+	clearPageAssignments(disp)
+
+	snap := disp.Snapshot()
+	if snap[0].StreamID == nil || *snap[0].StreamID != 10 {
+		t.Fatal("clearPageAssignments should preserve pinned bindings")
+	}
+}
+
+func TestClearPageAssignmentsPreservesManuallyUnbound(t *testing.T) {
+	disp := dispatcher.New(newNoopPW())
+	disp.Unbind(0)
+
+	clearPageAssignments(disp)
+
+	if !disp.Snapshot()[0].ManuallyUnbound {
+		t.Fatal("clearPageAssignments should preserve ManuallyUnbound flag")
+	}
+}
+
 func TestPlanBindingsLosesLiveBindingWhenPageSlotIsEmpty(t *testing.T) {
 	cfg := &config.Config{
 		Devices: map[string]config.DeviceConfig{},
