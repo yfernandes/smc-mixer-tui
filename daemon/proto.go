@@ -153,10 +153,11 @@ func snapFromWire(w snapshotWire) [8]dispatcher.Channel {
 
 // initialPayload is sent once on connect so the TUI can render immediately.
 type initialPayload struct {
-	Snapshot   snapshotWire             `json:"snapshot"`
-	Streams    []streams.EnrichedStream `json:"streams"`
-	Labels     [8]string                `json:"labels"`
-	ConfigPath string                   `json:"config_path,omitempty"`
+	Snapshot      snapshotWire             `json:"snapshot"`
+	Streams       []streams.EnrichedStream `json:"streams"`
+	Labels        [8]string                `json:"labels"`
+	ConfigPath    string                   `json:"config_path,omitempty"`
+	DaemonVersion string                   `json:"daemon_version,omitempty"`
 }
 
 // ── Command payloads (client → daemon) ───────────────────────────────────────

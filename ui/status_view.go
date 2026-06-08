@@ -8,6 +8,9 @@ import (
 )
 
 func (m Model) renderBar() string {
+	if m.versionMismatch {
+		return styleNoDevice.Render(" ⚠ version mismatch — TUI and daemon built from different commits; run 'make reinstall'")
+	}
 	if !m.deviceConnected {
 		return styleNoDevice.Render(" ⚠ no MIDI device — waiting for SMC…   q quit")
 	}

@@ -49,7 +49,7 @@ func TestDecodeCommandRejectsMalformedPayload(t *testing.T) {
 
 func TestHandleCmdAppliesDispatcherActions(t *testing.T) {
 	disp := dispatcher.New(daemonFakePW{})
-	srv := NewServer(disp, [8]string{}, "")
+	srv := NewServer(disp, [8]string{}, "", "")
 	ctx := context.Background()
 
 	srv.handleCmd(ctx, mustEnvelope(t, kindBind, bindPayload{

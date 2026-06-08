@@ -33,10 +33,11 @@ type Client struct {
 
 // InitialState holds the full state sent by the daemon on connection.
 type InitialState struct {
-	Snapshot   [8]dispatcher.Channel
-	Streams    []streams.EnrichedStream
-	Labels     [8]string
-	ConfigPath string // absolute path to the config file the daemon loaded
+	Snapshot      [8]dispatcher.Channel
+	Streams       []streams.EnrichedStream
+	Labels        [8]string
+	ConfigPath    string // absolute path to the config file the daemon loaded
+	DaemonVersion string // build version of the running daemon
 }
 
 // Connect dials the daemon socket and reads the initial state synchronously.
@@ -87,10 +88,11 @@ func readInitialState(scanner *bufio.Scanner) (InitialState, error) {
 		return InitialState{}, fmt.Errorf("decode initial state: %w", err)
 	}
 	return InitialState{
-		Snapshot:   snapFromWire(p.Snapshot),
-		Streams:    p.Streams,
-		Labels:     p.Labels,
-		ConfigPath: p.ConfigPath,
+		Snapshot:      snapFromWire(p.Snapshot),
+		Streams:       p.Streams,
+		Labels:        p.Labels,
+		ConfigPath:    p.ConfigPath,
+		DaemonVersion: p.DaemonVersion,
 	}, nil
 }
 

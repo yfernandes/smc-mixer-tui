@@ -21,6 +21,7 @@ type Server struct {
 	disp       *dispatcher.Dispatcher
 	labels     [8]string
 	configPath string
+	version    string
 
 	mu      sync.RWMutex
 	clients map[*serverConn]struct{}
@@ -31,11 +32,12 @@ type Server struct {
 
 // NewServer creates a Server backed by disp. labels are the per-channel config
 // labels sent to clients on connect so the TUI can show them for unbound strips.
-func NewServer(disp *dispatcher.Dispatcher, labels [8]string, configPath string) *Server {
+func NewServer(disp *dispatcher.Dispatcher, labels [8]string, configPath string, version string) *Server {
 	return &Server{
 		disp:       disp,
 		labels:     labels,
 		configPath: configPath,
+		version:    version,
 		clients:    make(map[*serverConn]struct{}),
 	}
 }
@@ -136,10 +138,11 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 	s.streamsMu.RUnlock()
 
 	init := initialPayload{
-		Snapshot:   snapToWire(s.disp.Snapshot()),
-		Streams:    currentStreams,
-		Labels:     s.labels,
-		ConfigPath: s.configPath,
+		Snapshot:      snapToWire(s.disp.Snapshot()),
+		Streams:       currentStreams,
+		Labels:        s.labels,
+		ConfigPath:    s.configPath,
+		DaemonVersion: s.version,
 	}
 	if currentStreams == nil {
 		init.Streams = []streams.EnrichedStream{}

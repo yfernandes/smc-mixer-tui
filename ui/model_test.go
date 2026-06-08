@@ -38,7 +38,7 @@ func (f *fakeDisp) ToggleSolo(ch int) {}
 // — helpers —
 
 func makeModel(d *fakeDisp, ss []streams.EnrichedStream) Model {
-	return New(d, d.snap, [8]string{}, ss, [8]StripConfig{}, nil)
+	return New(d, d.snap, [8]string{}, ss, [8]StripConfig{}, nil, false)
 }
 
 // upd sends msg through Update and returns the new Model, discarding the Cmd.
@@ -511,7 +511,7 @@ func TestReloadKeyIncrementsCounter(t *testing.T) {
 		called++
 		return [8]StripConfig{}
 	}
-	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn)
+	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn, false)
 	m = upd(m, kRune('r'))
 	if m.cfgReloads != 1 {
 		t.Fatalf("cfgReloads = %d after 'r', want 1", m.cfgReloads)
@@ -524,7 +524,7 @@ func TestReloadKeyIncrementsCounter(t *testing.T) {
 func TestReloadKeyUpdatesStripCfgs(t *testing.T) {
 	want := [8]StripConfig{{IsSplit: true, KnobType: "input"}}
 	reloadFn := func() [8]StripConfig { return want }
-	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn)
+	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn, false)
 	m = upd(m, kRune('r'))
 	if m.stripCfgs[0].IsSplit != true || m.stripCfgs[0].KnobType != "input" {
 		t.Fatalf("stripCfgs not updated after reload: %+v", m.stripCfgs[0])
@@ -542,7 +542,7 @@ func TestReloadKeyNoopWithNilFn(t *testing.T) {
 func TestReloadKeySuppressedInBindMode(t *testing.T) {
 	called := 0
 	reloadFn := func() [8]StripConfig { called++; return [8]StripConfig{} }
-	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn)
+	m := New(&fakeDisp{}, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, reloadFn, false)
 	m.bindMode = true
 	m = upd(m, kRune('r'))
 	if called != 0 {

@@ -69,6 +69,7 @@ type Model struct {
 	navSetting      navSetting // currently focused per-channel setting for MIDI nav
 	navStreamOpen   bool       // stream-list panel is visible; set on ◀/▶, cleared on context change
 	cfgReloads      int        // incremented each time 'r' fires; shows in status bar
+	versionMismatch bool       // true when TUI and daemon were built from different commits
 }
 
 // New creates the initial Model. snap and labels are the initial channel state
@@ -76,7 +77,7 @@ type Model struct {
 // stripCfgs describes which strips render as split zones on the main page.
 // reloadFn is called when the user presses 'r'; it re-reads the config file and returns
 // a fresh set of strip configs. May be nil (reload key becomes a no-op).
-func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream, stripCfgs [8]StripConfig, reloadFn func() [8]StripConfig) Model {
+func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream, stripCfgs [8]StripConfig, reloadFn func() [8]StripConfig, versionMismatch bool) Model {
 	return Model{
 		disp:            disp,
 		reloadFn:        reloadFn,
@@ -86,6 +87,7 @@ func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial 
 		enriched:        sortedByKind(initial),
 		deviceConnected: true, // assume connected until told otherwise
 		ActivePage:      "main",
+		versionMismatch: versionMismatch,
 	}
 }
 

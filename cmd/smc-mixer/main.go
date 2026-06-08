@@ -13,6 +13,9 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/ui"
 )
 
+// Version is set at build time via -ldflags "-X main.Version=...".
+var Version = "dev"
+
 func main() {
 	cfgFlag := flag.String("config", "", "config file (default: "+config.DefaultPath()+")")
 	flag.Parse()
@@ -49,8 +52,10 @@ func main() {
 		return lastGood
 	}
 
+	versionMismatch := state.DaemonVersion != "" && Version != "" && state.DaemonVersion != Version
+
 	program := tea.NewProgram(
-		ui.New(client, state.Snapshot, state.Labels, state.Streams, lastGood, reloadFn),
+		ui.New(client, state.Snapshot, state.Labels, state.Streams, lastGood, reloadFn, versionMismatch),
 		tea.WithAltScreen(),
 	)
 	client.SetProgram(program)

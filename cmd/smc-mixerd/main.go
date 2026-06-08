@@ -19,6 +19,9 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
 
+// Version is set at build time via -ldflags "-X main.Version=...".
+var Version = "dev"
+
 func main() {
 	var (
 		deviceFlag = flag.String("device", "", "MIDI device path (default: auto-detect SMC46)")
@@ -74,9 +77,9 @@ func main() {
 
 	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
 	defer manageCrossfaders.Close(context.Background())
-	manageCrossfaders.Sync(ctx, disp.ActivePage(), disp.Snapshot(), initial)
+	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
-	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath)
+	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath, Version)
 	srv.BroadcastStreams(initial)
 
 	go func() {
@@ -228,7 +231,7 @@ func pollStreams(
 	disp *dispatcher.Dispatcher,
 	srv *daemon.Server,
 	pinned *pinnedState,
-	manageCrossfaders func(context.Context, string, [8]dispatcher.Channel, []streams.EnrichedStream),
+	manageCrossfaders func(context.Context, [8]dispatcher.Channel, []streams.EnrichedStream),
 	rebindCh <-chan struct{},
 ) {
 	var (
@@ -250,7 +253,7 @@ func pollStreams(
 					continue
 				}
 				applyBindings(cfg, disp, ss, pinned.snapshot())
-				manageCrossfaders(ctx, disp.ActivePage(), disp.Snapshot(), ss)
+				manageCrossfaders(ctx, disp.Snapshot(), ss)
 				srv.BroadcastSnapshot(disp.Snapshot())
 			}
 		}
@@ -262,7 +265,7 @@ func pollStreams(
 		lastSS = ss
 		lastMu.Unlock()
 		applyBindings(cfg, disp, ss, pinned.snapshot())
-		manageCrossfaders(ctx, disp.ActivePage(), disp.Snapshot(), ss)
+		manageCrossfaders(ctx, disp.Snapshot(), ss)
 		srv.BroadcastStreams(ss)
 		srv.BroadcastSnapshot(disp.Snapshot())
 	})
