@@ -85,6 +85,15 @@ func (c *Config) effectiveKnob(dev *DeviceConfig) KnobConfig {
 	return KnobConfig{}
 }
 
+// KnobForDevice returns the effective KnobConfig for a named device, independent of page context.
+func (c *Config) KnobForDevice(deviceKey string) (KnobConfig, bool) {
+	dev := c.DeviceFor(deviceKey)
+	if dev == nil {
+		return KnobConfig{}, false
+	}
+	return c.effectiveKnob(dev), true
+}
+
 // ResolveOutput resolves a device key to its match string (the PipeWire device description).
 // If the key is not found in devices, the key itself is returned.
 func (c *Config) ResolveOutput(key string) string {

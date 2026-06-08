@@ -3,6 +3,7 @@ package pipewire
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // CrossfaderRouting holds the pactl/PipeWire object IDs for one channel's crossfader.
@@ -32,18 +33,40 @@ type CrossfaderRouting struct {
 	NullSinkName   string // e.g. "smc_ch0_void"
 	GainAName      string // e.g. "smc_ch0_gain_a"
 	GainBName      string // e.g. "smc_ch0_gain_b"
-	StreamNodeID   uint32 // PipeWire stream node ID whose target.object was pinned
+	StreamNodeID   uint32 // PipeWire stream node ID; used to mute/unmute around routing changes
 }
 
 // SetupCrossfader creates a null-sink, two gain-stage null sinks, and four loopbacks
 // to independently route the stream to sinkANodeName and sinkBNodeName.
 //
 // streamNodeName is the PipeWire node.name of the stream (e.g. "firefox.instance_1_46").
-// It is used as a fallback when the pactl sink-input lacks a node.id property,
-// which is common for PipeWire-native streams such as Firefox or Chrome.
+// Used as a fallback identifier when the pactl sink-input omits node.id (common for
+// PipeWire-native streams such as Firefox or Chromium).
 //
 // tag must be unique per channel (e.g. "ch0") and stable across calls.
 func (c *Client) SetupCrossfader(ctx context.Context, tag string, streamNodeID uint32, streamNodeName, sinkANodeName, sinkBNodeName string) (*CrossfaderRouting, error) {
+	// Silence the stream before any graph changes to prevent audible transients.
+	if streamNodeID != 0 {
+		_ = c.SetMute(ctx, streamNodeID, true)
+	}
+
+	routing, err := c.setupCrossfaderInner(ctx, tag, streamNodeID, streamNodeName, sinkANodeName, sinkBNodeName)
+	if err != nil {
+		if streamNodeID != 0 {
+			_ = c.SetMute(ctx, streamNodeID, false)
+		}
+		return nil, err
+	}
+
+	// Let the loopback graph fill its initial buffers before unmuting.
+	time.Sleep(60 * time.Millisecond)
+	if streamNodeID != 0 {
+		_ = c.SetMute(ctx, streamNodeID, false)
+	}
+	return routing, nil
+}
+
+func (c *Client) setupCrossfaderInner(ctx context.Context, tag string, streamNodeID uint32, streamNodeName, sinkANodeName, sinkBNodeName string) (*CrossfaderRouting, error) {
 	if err := c.CleanupCrossfaderTag(ctx, tag); err != nil {
 		return nil, fmt.Errorf("cleanup stale crossfader modules: %w", err)
 	}
@@ -54,37 +77,26 @@ func (c *Client) SetupCrossfader(ctx context.Context, tag string, streamNodeID u
 		return nil, err
 	}
 
-	nullNodeID, err := c.findNodeIDByName(ctx, plan.names.null)
-	if err != nil {
-		plan.unloadLoaded(ctx, c)
-		return nil, fmt.Errorf("find null sink node: %w", err)
-	}
+	// Record the stream node ID now so mute/unmute and teardown work even if
+	// the pactl move below fails.
 	if streamNodeID != 0 {
-		if err := c.RouteStreamToSink(ctx, streamNodeID, nullNodeID); err != nil {
-			plan.unloadLoaded(ctx, c)
-			return nil, fmt.Errorf("pin stream route: %w", err)
-		}
 		plan.r.StreamNodeID = streamNodeID
 	}
 
+	// Find the sink-input BEFORE any routing calls. RouteStreamToSink (WirePlumber)
+	// was previously called here, but it causes a race: WirePlumber can asynchronously
+	// move the stream and invalidate the sink-input index between findSinkInput and
+	// MoveSinkInput. The nodeName fallback in findSinkInput handles PipeWire-native
+	// streams (e.g. Firefox, Chromium) without needing WirePlumber to move them first.
 	streamSI, err := c.findSinkInput(ctx, streamNodeID, streamNodeName)
 	if err != nil {
-		if streamNodeID != 0 {
-			_ = c.ClearStreamRoute(ctx, streamNodeID)
-		}
 		plan.unloadLoaded(ctx, c)
 		return nil, fmt.Errorf("find stream SI: %w", err)
 	}
 
 	if err := c.MoveSinkInput(ctx, streamSI, plan.names.null); err != nil {
-		if streamNodeID != 0 {
-			_ = c.ClearStreamRoute(ctx, streamNodeID)
-		}
 		plan.unloadLoaded(ctx, c)
 		return nil, fmt.Errorf("move stream to null sink: %w", err)
-	}
-	if streamNodeID != 0 {
-		_ = c.ClearStreamRoute(ctx, streamNodeID)
 	}
 
 	return plan.routing(streamSI), nil
@@ -105,12 +117,23 @@ func (c *Client) SetCrossfaderGains(ctx context.Context, r *CrossfaderRouting, v
 
 // TeardownCrossfader moves the stream back to the default sink and unloads all modules.
 func (c *Client) TeardownCrossfader(ctx context.Context, r *CrossfaderRouting) {
+	// Silence before touching the graph: prevents clicks and buzzing from
+	// in-flight audio buffers hitting an in-destruction routing path.
+	if r.StreamNodeID != 0 {
+		_ = c.SetMute(ctx, r.StreamNodeID, true)
+		time.Sleep(30 * time.Millisecond)
+	}
+
 	if r.StreamNodeID != 0 {
 		_ = c.ClearStreamRoute(ctx, r.StreamNodeID)
 	}
 	_ = c.MoveSinkInput(ctx, r.StreamSI, "@DEFAULT_SINK@")
 	for _, moduleID := range r.moduleIDsInUnloadOrder() {
 		_ = c.UnloadModule(ctx, moduleID)
+	}
+
+	if r.StreamNodeID != 0 {
+		_ = c.SetMute(ctx, r.StreamNodeID, false)
 	}
 }
 

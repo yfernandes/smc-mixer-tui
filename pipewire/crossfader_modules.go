@@ -55,9 +55,7 @@ func (c *Client) CleanupCrossfaderTag(ctx context.Context, tag string) error {
 	names := newCrossfaderSetup(tag, "", "").names
 	stale := staleCrossfaderModules(modules, names)
 	for i := len(stale) - 1; i >= 0; i-- {
-		if err := c.UnloadModule(ctx, stale[i]); err != nil {
-			return err
-		}
+		_ = c.UnloadModule(ctx, stale[i]) // ignore: module may already be gone
 	}
 	return nil
 }

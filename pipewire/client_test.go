@@ -396,6 +396,9 @@ func (r *recordingExec) client() *Client {
 			if name == "pw-metadata" {
 				return []byte{}, nil
 			}
+			if name == "wpctl" {
+				return []byte{}, nil
+			}
 			if cmd == "pactl list sink-inputs" {
 				return []byte(r.sinkInputs), nil
 			}
@@ -413,7 +416,6 @@ func (r *recordingExec) client() *Client {
 func TestSetupCrossfaderLoadsModulesAndMovesStream(t *testing.T) {
 	rec := &recordingExec{
 		loadIDs:    []uint32{101, 102, 103, 104, 105, 106, 107},
-		pwDump:     crossfaderPWDumpFixture("smc_ch0_void", 801),
 		sinkInputs: sinkInputFixture(77, 555, "firefox.node"),
 	}
 
@@ -431,14 +433,11 @@ func TestSetupCrossfaderLoadsModulesAndMovesStream(t *testing.T) {
 	if routing.NullSinkName != "smc_ch0_void" || routing.GainAName != "smc_ch0_gain_a" || routing.GainBName != "smc_ch0_gain_b" {
 		t.Fatalf("unexpected generated names: %+v", routing)
 	}
-	if !commandsContain(rec.commands, "pw-metadata 555 target.object 801") {
-		t.Fatalf("expected target.object route to null sink, commands=%v", rec.commands)
-	}
 	if !commandsContain(rec.commands, "pactl move-sink-input 77 smc_ch0_void") {
 		t.Fatalf("expected stream move to null sink, commands=%v", rec.commands)
 	}
-	if !commandsContain(rec.commands, "pw-metadata -d 555 target.object") {
-		t.Fatalf("expected target.object route to be cleared after move, commands=%v", rec.commands)
+	if commandsContainPrefix(rec.commands, "pw-metadata") {
+		t.Fatalf("setup must not call pw-metadata (WirePlumber race), commands=%v", rec.commands)
 	}
 	if len(rec.unloaded) != 0 {
 		t.Fatalf("successful setup should not unload modules, got %v", rec.unloaded)
@@ -449,7 +448,6 @@ func TestSetupCrossfaderCleansUpStaleModulesForTag(t *testing.T) {
 	rec := &recordingExec{
 		loadIDs:    []uint32{101, 102, 103, 104, 105, 106, 107},
 		modules:    pulseModuleFixture(),
-		pwDump:     crossfaderPWDumpFixture("smc_ch0_void", 801),
 		sinkInputs: sinkInputFixture(77, 555, "firefox.node"),
 	}
 
@@ -478,6 +476,9 @@ func TestSetupCrossfaderCleansUpStaleModulesForTag(t *testing.T) {
 		if cmd == "pactl list short modules" {
 			continue
 		}
+		if strings.HasPrefix(cmd, "wpctl set-mute") {
+			continue
+		}
 		t.Fatalf("unexpected command before new modules are loaded: %s", cmd)
 	}
 }
@@ -486,7 +487,6 @@ func TestSetupCrossfaderRollsBackLoadedModulesOnLoadFailure(t *testing.T) {
 	rec := &recordingExec{
 		loadIDs:  []uint32{101, 102, 103, 104, 105, 106, 107},
 		failLoad: "source=smc_ch0_gain_a.monitor sink=sink_a",
-		pwDump:   crossfaderPWDumpFixture("smc_ch0_void", 801),
 	}
 
 	_, err := rec.client().SetupCrossfader(context.Background(), "ch0", 555, "firefox.node", "sink_a", "sink_b")
@@ -504,7 +504,6 @@ func TestSetupCrossfaderRollsBackLoadedModulesOnLoadFailure(t *testing.T) {
 func TestSetupCrossfaderRollsBackLoadedModulesWhenStreamMoveFails(t *testing.T) {
 	rec := &recordingExec{
 		loadIDs:     []uint32{101, 102, 103, 104, 105, 106, 107},
-		pwDump:      crossfaderPWDumpFixture("smc_ch0_void", 801),
 		sinkInputs:  sinkInputFixture(77, 555, "firefox.node"),
 		moveSinkErr: true,
 	}
@@ -534,8 +533,11 @@ func TestTeardownCrossfaderRestoresDefaultSinkThenUnloads(t *testing.T) {
 
 	rec.client().TeardownCrossfader(context.Background(), routing)
 
-	if len(rec.commands) < 2 || rec.commands[0] != "pw-metadata -d 555 target.object" || rec.commands[1] != "pactl move-sink-input 77 @DEFAULT_SINK@" {
-		t.Fatalf("teardown should clear target.object then restore default sink, commands=%v", rec.commands)
+	if len(rec.commands) < 3 ||
+		rec.commands[0] != "wpctl set-mute 555 1" ||
+		rec.commands[1] != "pw-metadata -d 555 target.object" ||
+		rec.commands[2] != "pactl move-sink-input 77 @DEFAULT_SINK@" {
+		t.Fatalf("teardown should mute, clear target.object, then restore default sink, commands=%v", rec.commands)
 	}
 	if !sameUint32s(rec.unloaded, []uint32{107, 106, 105, 104, 103, 102, 101}) {
 		t.Fatalf("unloaded = %v, want reverse routing modules", rec.unloaded)

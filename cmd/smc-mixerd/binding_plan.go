@@ -59,9 +59,10 @@ func planChannelBinding(cfg *config.Config, activePage string, ch int, current d
 			mprisName: mprisName(*s),
 		}, true
 	}
-	if live {
-		return bindingAction{ch: ch, lose: true}, true
-	}
+	// Stream is live but enrichment (MPRIS/Hyprland) no longer matches the config
+	// pattern — e.g. a browser stream moved to a null sink whose MPRIS identity
+	// briefly reverts to its raw PipeWire name. Preserve the binding: evicting a
+	// live stream with no replacement causes a teardown/rebuild loop.
 	return bindingAction{}, false
 }
 
