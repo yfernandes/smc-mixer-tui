@@ -549,6 +549,7 @@ func TestTeardownCrossfaderRestoresDefaultSinkThenUnloads(t *testing.T) {
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsSlow(s, sub))
 }
+
 func containsSlow(s, sub string) bool {
 	for i := range s {
 		if i+len(sub) <= len(s) && s[i:i+len(sub)] == sub {
@@ -557,6 +558,7 @@ func containsSlow(s, sub string) bool {
 	}
 	return false
 }
+
 func abs(x float64) float64 {
 	if x < 0 {
 		return -x
