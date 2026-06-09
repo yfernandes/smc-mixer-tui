@@ -130,7 +130,7 @@ func routeMIDI(midiCh <-chan midi.Msg, dispCh chan<- midi.Msg, srv *daemon.Serve
 func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Server, disp *dispatcher.Dispatcher, midiCh chan<- midi.Msg) {
 	defer close(midiCh)
 	for {
-		dev, ok := waitForMIDIDevice(ctx, fixedDevice, srv)
+		dev, cleanup, ok := waitForMIDIDevice(ctx, fixedDevice, srv)
 		if !ok {
 			return
 		}
@@ -157,6 +157,10 @@ func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Serv
 			w.Close()
 		}
 
+		if cleanup != nil {
+			cleanup()
+		}
+
 		if ctx.Err() != nil {
 			return
 		}
@@ -171,24 +175,31 @@ func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Serv
 	}
 }
 
-// waitForMIDIDevice blocks until a MIDI device is available and returns its path.
+// waitForMIDIDevice blocks until a MIDI device is available and returns its path
+// and an optional cleanup func (non-nil when a virmidi bridge was created).
 // If fixedDevice is set, it polls that path directly; otherwise it auto-detects
-// an SMC device. Broadcasts Connected:false once before the first poll attempt.
-func waitForMIDIDevice(ctx context.Context, fixedDevice string, srv *daemon.Server) (string, bool) {
+// a USB SMC device first, then falls back to a Bluetooth sequencer bridge.
+// Broadcasts Connected:false once before the first poll attempt.
+func waitForMIDIDevice(ctx context.Context, fixedDevice string, srv *daemon.Server) (dev string, cleanup func(), ok bool) {
 	srv.BroadcastDevice(midi.DeviceStatusMsg{Connected: false})
 	for {
 		if fixedDevice != "" {
 			if _, err := os.Stat(fixedDevice); err == nil {
-				return fixedDevice, true
+				return fixedDevice, nil, true
 			}
 		} else {
 			if dev, err := midi.FindDevice("SMC"); err == nil {
-				return dev, true
+				return dev, nil, true
+			}
+			if bridge, err := midi.BridgeSequencerPort("SMC"); err == nil {
+				return bridge.DevPath, bridge.Close, true
+			} else {
+				log.Printf("BLE MIDI bridge failed: %v", err)
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return "", false
+			return "", nil, false
 		case <-time.After(2 * time.Second):
 		}
 	}
