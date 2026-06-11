@@ -12,7 +12,8 @@ import (
 
 type crossGains = [2]float64
 
-// PickupThreshold is the default fader-to-actual-volume tolerance for soft pickup (≈2 MIDI steps out of 127).
+// PickupThreshold is the default fader-to-actual-volume tolerance for soft pickup (~1.6% of full travel).
+// Expressed as a normalized fraction so it is independent of MIDI bit depth.
 const PickupThreshold = 2.0 / 127.0
 
 // SyncMode determines how a channel fader re-establishes control after being unsynced.
@@ -59,8 +60,18 @@ type Channel struct {
 	Name            string         // display name; "" if unbound
 	Kind            audio.NodeKind // functional role; set on Bind
 	MPRISName       string         // MPRIS player name suffix; "" if not an MPRIS source
-	ActualVolume    float64        // volume last reported by PipeWire; display only
-	FaderPos        float64        // physical hardware fader position, 0.0–1.0
+
+	// FaderPos and ActualVolume are intentionally independent:
+	// FaderPos is the raw hardware position from MIDI CC, updated on every message,
+	// never throttled or adjusted by software. FaderPosKnown is false until the first
+	// CC arrives so the UI can distinguish "at zero" from "not yet received".
+	// ActualVolume is the PipeWire-reported volume — the authoritative application
+	// target and the pickup reference. They diverge whenever the fader hasn't yet
+	// established sync (Synced=false), and converge once pickup is complete.
+	FaderPos     float64 // physical hardware fader position, 0.0–1.0; see FaderPosKnown
+	FaderPosKnown bool   // true once the first MIDI CC has been received for this channel
+	ActualVolume float64 // volume last reported by PipeWire; the APP-side authority and pickup target
+
 	LastSetVol      float64        // last volume we sent to PipeWire; -1 = never
 	Synced          bool           // fader has established sync and now controls PipeWire
 	SyncMode        SyncMode       // how this channel establishes fader sync; set at bind time from config

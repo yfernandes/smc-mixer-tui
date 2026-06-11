@@ -111,6 +111,7 @@ func (c *Channel) moveFader(pos float64) faderUpdate {
 // true→false here (only bind/clearBinding reset it).
 func (c *Channel) moveZero(pos float64) {
 	c.FaderPos = pos
+	c.FaderPosKnown = true
 	if !c.Synced && pos < PickupThreshold {
 		c.Synced = true
 	}
@@ -134,6 +135,7 @@ func (c *Channel) moveSoftPickup(pos float64) {
 	prev := c.prevFaderPos
 	c.prevFaderPos = pos
 	c.FaderPos = pos
+	c.FaderPosKnown = true
 
 	if c.Synced {
 		c.LastSetVol = pos

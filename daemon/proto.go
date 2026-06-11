@@ -73,6 +73,7 @@ type channelWire struct {
 	MPRISName      string         `json:"mpris_name"`
 	ActualVolume   float64        `json:"actual_volume"`
 	FaderPos       float64        `json:"fader_pos"`
+	FaderPosKnown  bool           `json:"fader_pos_known"`
 	LastSetVol     float64        `json:"last_set_vol"`
 	Synced         bool           `json:"synced"`
 	Knob           int            `json:"knob"`
@@ -95,6 +96,7 @@ func toWire(c dispatcher.Channel) channelWire {
 		MPRISName:      c.MPRISName,
 		ActualVolume:   c.ActualVolume,
 		FaderPos:       c.FaderPos,
+		FaderPosKnown:  c.FaderPosKnown,
 		LastSetVol:     c.LastSetVol,
 		Synced:         c.Synced,
 		Knob:           c.Knob,
@@ -118,6 +120,7 @@ func fromWire(w channelWire) dispatcher.Channel {
 		MPRISName:      w.MPRISName,
 		ActualVolume:   w.ActualVolume,
 		FaderPos:       w.FaderPos,
+		FaderPosKnown:  w.FaderPosKnown,
 		LastSetVol:     w.LastSetVol,
 		Synced:         w.Synced,
 		Knob:           w.Knob,

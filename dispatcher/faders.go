@@ -36,7 +36,7 @@ func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
 }
 
 func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
-	faderPos := float64(m.Value) / 127.0
+	faderPos := float64(m.Value) / 16383.0
 
 	d.mu.Lock()
 	adv := d.channels[m.Channel].Advanced
@@ -50,8 +50,10 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 	leds := d.leds
 	d.mu.Unlock()
 
-	if leds != nil {
-		leds.SetFaderLED(m.Channel, update.bound && update.synced)
+	// Only signal sync state via LED when bound — for unbound channels, SetFaderLED
+	// would send a pitch-bend-at-zero command that fights the physical fader position.
+	if leds != nil && update.bound {
+		leds.SetFaderLED(m.Channel, update.synced)
 	}
 
 	if !update.synced || !update.bound {

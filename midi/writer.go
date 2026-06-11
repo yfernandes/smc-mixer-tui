@@ -63,14 +63,17 @@ func (w *Writer) SetFaderLED(ch int, blink bool) {
 	w.write([3]byte{0xE0 + byte(ch), 0x00, msb})
 }
 
-// SetFaderPosition moves the motorized fader to vol (0.0–1.0).
+// SetFaderPosition moves the motorized fader to vol (0.0–1.0) using full 14-bit resolution.
 func (w *Writer) SetFaderPosition(ch int, vol float64) {
 	if vol < 0 {
 		vol = 0
 	} else if vol > 1 {
 		vol = 1
 	}
-	w.write([3]byte{0xE0 + byte(ch), 0x00, byte(vol * 127)})
+	raw := uint16(vol * 16383)
+	lsb := byte(raw & 0x7F)
+	msb := byte(raw >> 7)
+	w.write([3]byte{0xE0 + byte(ch), lsb, msb})
 }
 
 // SetGlobalLED sets a transport button LED on or off.

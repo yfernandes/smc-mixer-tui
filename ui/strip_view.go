@@ -117,7 +117,10 @@ func (m Model) renderSplitStrip(ch int) string {
 
 	faderHeader, faderLabelStr := splitFaderHeader(ch, cfg, c, state)
 	cols := newStripColumns()
-	fRows := faderRows(c.ActualVolume, splitFaderH, leftW)
+	hwKnown := c.FaderPosKnown
+	appBound := c.StreamID != nil
+	// synced is only meaningful when a stream is bound; without an APP target there is nothing to sync to.
+	fRows := dualFaderRows(c.FaderPos, c.ActualVolume, hwKnown, appBound, c.Synced && appBound, splitFaderH, leftW)
 	focusedNav := ch == m.selected && !m.bindMode
 
 	lines := []string{
@@ -180,7 +183,10 @@ func (m Model) renderStrip(ch int) string {
 
 	knobLine, knobBar := knobRows(c)
 	header, nameLine, subLine := m.stripHeader(ch, c, es, state, focusedNav)
-	fRows := faderRows(c.ActualVolume, unifiedFaderH, leftW)
+	hwKnown := c.FaderPosKnown
+	appBound := c.StreamID != nil
+	// synced is only meaningful when a stream is bound; without an APP target there is nothing to sync to.
+	fRows := dualFaderRows(c.FaderPos, c.ActualVolume, hwKnown, appBound, c.Synced && appBound, unifiedFaderH, leftW)
 
 	lines := []string{
 		header,

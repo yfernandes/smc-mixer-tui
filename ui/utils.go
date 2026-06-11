@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yfernandes/smc-mixer-tui/audio"
@@ -13,26 +12,14 @@ import (
 )
 
 // pickupLabel returns the 4-char volume/sync string for the bottom of a strip.
-// When synced (or unbound): " 60%". When awaiting pickup: blinking "↑60%" / "↓60%".
+// Unbound or synced channels show " 60%". Awaiting-pickup channels render the
+// percentage in orange — the dual fader bars already convey direction.
 func pickupLabel(c dispatcher.Channel) string {
 	pct := fmt.Sprintf("%3.0f%%", c.ActualVolume*100)
-	if c.StreamID == nil || c.Synced {
-		return pct
+	if c.StreamID != nil && !c.Synced {
+		return pickupArrowStyle.Render(pct)
 	}
-	// Blink the direction arrow at ~300ms on / 300ms off.
-	blink := time.Now().UnixMilli()%600 < 300
-	var arrow string
-	switch {
-	case !blink:
-		arrow = " "
-	case c.FaderPos > c.ActualVolume+dispatcher.PickupThreshold:
-		arrow = "↓" // fader is above actual — move it down
-	case c.FaderPos < c.ActualVolume-dispatcher.PickupThreshold:
-		arrow = "↑" // fader is below actual — move it up
-	default:
-		arrow = "~" // nearly there
-	}
-	return pickupArrowStyle.Render(arrow) + pct[:3]
+	return pct
 }
 
 // renderBtn returns a 3-char button string "[X]", styled when active.
@@ -68,19 +55,71 @@ func faderBar(val float64, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 }
 
-// faderRows returns height strings forming a vertical fader (zero at bottom).
-// Each row is width chars wide with a centered 4-char block bar.
-func faderRows(vol float64, height, width int) []string {
-	filled := max(0, min(height, int(math.Round(vol*float64(height)))))
-	barW := min(faderBarW, width)
-	pad := strings.Repeat(" ", (width-barW)/2)
+// dualFaderRows returns height strings forming two vertical bars side by side (zero at bottom).
+//
+// Left bar  (▓▓ red)   = HW: raw hardware fader position from MIDI CC.
+//
+//	Always rendered when hwKnown; shown as '─ ' dim until the first CC arrives.
+//	Independent of channel binding — reflects the physical fader at all times.
+//
+// Right bar (░░ green) = APP: PipeWire-reported volume / pickup target.
+//
+//	Rendered only when appBound (a stream is assigned to this channel); blank otherwise.
+//	These two values are intentionally independent; see dispatcher.Channel for why.
+//
+// When synced both bars render white to signal agreement.
+// '▓' vs '░' keeps bars distinct on color-free terminals; color is the primary cue.
+func dualFaderRows(hw, app float64, hwKnown, appBound, synced bool, height, width int) []string {
+	const (
+		hwChar        = "▓▓" // dense block — hardware position (2 chars wide)
+		appChar       = "░░" // light block — application target (2 chars wide)
+		barW          = 2    // each bar is 2 chars wide
+		tickChar      = " ▔ " // U+2594 upper-eighth block, 3 chars total
+		finalTickChar = " 🮀 " // U+1FB80 upper+lower eighth block, 3 chars total
+		tickW         = 3    // visual width of tickChar / finalTickChar
+	)
+	rightPad := strings.Repeat(" ", max(0, width-tickW-barW*2))
+
+	hwFilled := max(0, min(height, int(math.Round(hw*float64(height)))))
+	appFilled := max(0, min(height, int(math.Round(app*float64(height)))))
+
 	rows := make([]string, height)
 	for i := range height {
-		if i >= height-filled {
-			rows[i] = pad + strings.Repeat("█", barW) + pad
+		fromBottom := height - 1 - i
+
+		var hwS string
+		if !hwKnown {
+			if fromBottom == 0 {
+				hwS = hwUnknownStyle.Render(hwChar)
+			} else {
+				hwS = "  "
+			}
+		} else if fromBottom < hwFilled {
+			if synced {
+				hwS = syncFaderStyle.Render(hwChar)
+			} else {
+				hwS = hwFaderStyle.Render(hwChar)
+			}
 		} else {
-			rows[i] = pad + strings.Repeat("░", barW) + pad
+			hwS = "  "
 		}
+
+		var appS string
+		if appBound && fromBottom < appFilled {
+			if synced {
+				appS = syncFaderStyle.Render(appChar)
+			} else {
+				appS = appFaderStyle.Render(appChar)
+			}
+		} else {
+			appS = "  "
+		}
+
+		tick := tickChar
+		if fromBottom == 0 {
+			tick = finalTickChar
+		}
+		rows[i] = tick + hwS + appS + rightPad
 	}
 	return rows
 }

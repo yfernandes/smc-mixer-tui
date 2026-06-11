@@ -7,10 +7,17 @@ import (
 )
 
 // SetLEDWriter sets (or clears, if nil) the LED output device.
+// When cleared (w == nil), FaderPosKnown is reset on all channels: the hardware
+// position may change while disconnected and cannot be known until the next CC.
 func (d *Dispatcher) SetLEDWriter(w LEDWriter) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.leds = w
+	if w == nil {
+		for i := range d.channels {
+			d.channels[i].FaderPosKnown = false
+		}
+	}
 }
 
 // SyncLEDs pushes the full current LED state to the device. Call after connecting

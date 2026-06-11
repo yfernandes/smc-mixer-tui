@@ -93,8 +93,9 @@ func TestFaderSetsVolumeAfterPickup(t *testing.T) {
 		t.Fatal("channel should be synced after fader reaches zero")
 	}
 
-	want := 64.0 / 127.0
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	const val14 = uint16(8192) // ≈ 50% in 14-bit (8192/16383)
+	want := 8192.0 / 16383.0
+	send(d, midi.FaderMsg{Channel: 0, Value: val14})
 	if !approxEq(pw.volumes[42], want) {
 		t.Fatalf("SetVolume got %.9f, want %.9f", pw.volumes[42], want)
 	}
@@ -108,7 +109,7 @@ func TestFaderNoCallBeforePickup(t *testing.T) {
 	d := New(pw)
 	d.Bind(0, 42, "Firefox", audio.KindSource, "")
 	// Fader above zero — must not sync or call SetVolume until zero is reached.
-	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // 64/127 ≈ 0.504
+	send(d, midi.FaderMsg{Channel: 0, Value: 8192}) // 8192/16383 ≈ 0.500
 
 	if _, called := pw.volumes[42]; called {
 		t.Fatal("SetVolume must not be called before fader reaches zero")
@@ -134,10 +135,10 @@ func TestFaderMaxAfterZeroSync(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 	d.Bind(0, 1, "test", audio.KindSource, "")
-	send(d, midi.FaderMsg{Channel: 0, Value: 0})   // sync at zero
-	send(d, midi.FaderMsg{Channel: 0, Value: 127}) // drive to max
+	send(d, midi.FaderMsg{Channel: 0, Value: 0})     // sync at zero
+	send(d, midi.FaderMsg{Channel: 0, Value: 16383}) // drive to max
 	if !approxEq(pw.volumes[1], 1.0) {
-		t.Fatalf("value 127 → volume %.9f, want 1.0", pw.volumes[1])
+		t.Fatalf("value 16383 → volume %.9f, want 1.0", pw.volumes[1])
 	}
 }
 
@@ -145,13 +146,38 @@ func TestFaderUnboundUpdatesStateOnly(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 
-	send(d, midi.FaderMsg{Channel: 0, Value: 100})
+	send(d, midi.FaderMsg{Channel: 0, Value: 12800}) // 12800/16383 ≈ 0.781
 
 	if len(pw.volumes) != 0 {
 		t.Fatal("unbound channel should not call SetVolume")
 	}
-	if !approxEq(d.Snapshot()[0].FaderPos, 100.0/127.0) {
+	if !approxEq(d.Snapshot()[0].FaderPos, 12800.0/16383.0) {
 		t.Fatal("FaderPos should update even when unbound")
+	}
+	if !d.Snapshot()[0].FaderPosKnown {
+		t.Fatal("FaderPosKnown should be true after first fader message")
+	}
+}
+
+func TestSetLEDWriterNilInvalidatesFaderPosKnown(t *testing.T) {
+	d := New(newFakePW())
+	d.SetLEDWriter(newFakeLEDs())
+
+	// Establish known positions on a few channels.
+	send(d, midi.FaderMsg{Channel: 0, Value: 8192})
+	send(d, midi.FaderMsg{Channel: 3, Value: 4096})
+	if !d.Snapshot()[0].FaderPosKnown || !d.Snapshot()[3].FaderPosKnown {
+		t.Fatal("precondition: FaderPosKnown should be true after fader messages")
+	}
+
+	// Device disconnect: position may drift while unplugged.
+	d.SetLEDWriter(nil)
+
+	snap := d.Snapshot()
+	for ch := range 8 {
+		if snap[ch].FaderPosKnown {
+			t.Errorf("ch%d: FaderPosKnown should be false after device disconnect", ch)
+		}
 	}
 }
 
@@ -171,7 +197,7 @@ func TestSoftPickupSyncsWhenFaderCrossesTarget(t *testing.T) {
 	d.UpdateActualVolume(0, 80.0/127.0) // target at CC 80
 
 	// Fader starts below target; no sync yet.
-	send(d, midi.FaderMsg{Channel: 0, Value: 60}) // below 80-2=78
+	send(d, midi.FaderMsg{Channel: 0, Value: 7680}) // 60*128; below target window
 	if d.Snapshot()[0].Synced {
 		t.Fatal("should not be synced before crossing target")
 	}
@@ -180,12 +206,12 @@ func TestSoftPickupSyncsWhenFaderCrossesTarget(t *testing.T) {
 	}
 
 	// Fader crosses into tolerance window from below.
-	send(d, midi.FaderMsg{Channel: 0, Value: 79}) // 79 >= 78 (80-2): enters window
+	send(d, midi.FaderMsg{Channel: 0, Value: 10112}) // 79*128; enters window from below
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("should be synced after fader crosses target from below")
 	}
-	if !approxEq(pw.volumes[42], 79.0/127.0) {
-		t.Fatalf("SetVolume = %.4f, want %.4f", pw.volumes[42], 79.0/127.0)
+	if !approxEq(pw.volumes[42], 10112.0/16383.0) {
+		t.Fatalf("SetVolume = %.4f, want %.4f", pw.volumes[42], 10112.0/16383.0)
 	}
 }
 
@@ -197,13 +223,13 @@ func TestSoftPickupSyncsFromAbove(t *testing.T) {
 	d.UpdateActualVolume(0, 40.0/127.0) // target at CC 40
 
 	// Fader starts above target.
-	send(d, midi.FaderMsg{Channel: 0, Value: 80}) // above 40+2=42
+	send(d, midi.FaderMsg{Channel: 0, Value: 10240}) // 80*128; above target window
 	if d.Snapshot()[0].Synced {
 		t.Fatal("should not be synced before crossing target from above")
 	}
 
 	// Sweep down into window.
-	send(d, midi.FaderMsg{Channel: 0, Value: 41}) // 41 <= 42 (40+2): enters window
+	send(d, midi.FaderMsg{Channel: 0, Value: 5248}) // 41*128; enters window from above
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("should be synced after fader crosses target from above")
 	}
@@ -217,9 +243,9 @@ func TestSoftPickupIgnoresFaderOnWrongSide(t *testing.T) {
 	d.UpdateActualVolume(0, 80.0/127.0) // target at CC 80
 
 	// Fader starts above target and moves further above; must not sync.
-	send(d, midi.FaderMsg{Channel: 0, Value: 100})
-	send(d, midi.FaderMsg{Channel: 0, Value: 110})
-	send(d, midi.FaderMsg{Channel: 0, Value: 120})
+	send(d, midi.FaderMsg{Channel: 0, Value: 12800}) // 100*128
+	send(d, midi.FaderMsg{Channel: 0, Value: 14080}) // 110*128
+	send(d, midi.FaderMsg{Channel: 0, Value: 15360}) // 120*128
 	if d.Snapshot()[0].Synced {
 		t.Fatal("fader moving away from target (wrong direction) must not sync")
 	}
@@ -237,8 +263,8 @@ func TestSoftPickupFastSweepOvershoot(t *testing.T) {
 	setSoftPickup(d, 0)
 	d.UpdateActualVolume(0, 60.0/127.0) // target at CC 60
 
-	send(d, midi.FaderMsg{Channel: 0, Value: 30})  // prev=30, below target-2=58
-	send(d, midi.FaderMsg{Channel: 0, Value: 100}) // jumped over target (30<58, 100>=58)
+	send(d, midi.FaderMsg{Channel: 0, Value: 3840})  // 30*128; prev below target window
+	send(d, midi.FaderMsg{Channel: 0, Value: 12800}) // 100*128; jumped over target
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("fast sweep overshoot should trigger sync")
 	}
@@ -252,8 +278,8 @@ func TestSoftPickupAlreadyAtTarget(t *testing.T) {
 	setSoftPickup(d, 0)
 	d.UpdateActualVolume(0, 64.0/127.0) // target at CC 64
 
-	// Fader at CC 64 — within ±2 tolerance: sync immediately.
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	// Fader within ±tol of target: sync immediately.
+	send(d, midi.FaderMsg{Channel: 0, Value: 8192}) // 64*128; within tolerance of 64/127 target
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("fader already at target should sync immediately")
 	}
@@ -269,18 +295,18 @@ func TestSoftPickupTargetUpdateResetsPickupSide(t *testing.T) {
 	setSoftPickup(d, 0)
 
 	// First fader message while ActualVolume=0 (bind resets it to 0).
-	// Fader at 0.5 is above 0: pickupSide=above.
-	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // above target=0
+	// Fader at ~50% is above 0: pickupSide=above.
+	send(d, midi.FaderMsg{Channel: 0, Value: 8192}) // 64*128; above target=0
 
 	// Polling updates the real volume; should reset pickupSide.
-	d.UpdateActualVolume(0, 80.0/127.0) // target=80, fader=64 is now below
+	d.UpdateActualVolume(0, 80.0/127.0) // target=80/127, fader=~50% is now below
 
 	// Next fader message: pickupSide should now be below; sweep up to sync.
-	send(d, midi.FaderMsg{Channel: 0, Value: 70}) // still below 80-2=78
+	send(d, midi.FaderMsg{Channel: 0, Value: 8960}) // 70*128; still below target window
 	if d.Snapshot()[0].Synced {
 		t.Fatal("should not be synced before crossing new target")
 	}
-	send(d, midi.FaderMsg{Channel: 0, Value: 79}) // enters window from below
+	send(d, midi.FaderMsg{Channel: 0, Value: 10112}) // 79*128; enters window from below
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("should sync after crossing target post-ActualVolume-update")
 	}
@@ -294,15 +320,15 @@ func TestSoftPickupNoUnsyncAfterSync(t *testing.T) {
 	setSoftPickup(d, 0)
 	d.UpdateActualVolume(0, 60.0/127.0)
 
-	send(d, midi.FaderMsg{Channel: 0, Value: 30}) // below
-	send(d, midi.FaderMsg{Channel: 0, Value: 60}) // syncs at target
+	send(d, midi.FaderMsg{Channel: 0, Value: 3840}) // 30*128; below target
+	send(d, midi.FaderMsg{Channel: 0, Value: 7680}) // 60*128; within tolerance of 60/127
 
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("should be synced at target")
 	}
 
 	// Large movement away from where we synced.
-	send(d, midi.FaderMsg{Channel: 0, Value: 127})
+	send(d, midi.FaderMsg{Channel: 0, Value: 16383})
 	send(d, midi.FaderMsg{Channel: 0, Value: 0})
 	if !d.Snapshot()[0].Synced {
 		t.Fatal("synced channel must not un-sync from fader movement")
@@ -317,8 +343,8 @@ func TestSoftPickupPinnedChannelPreservesSync(t *testing.T) {
 	setSoftPickup(d, 0)
 	d.UpdateActualVolume(0, 60.0/127.0)
 
-	send(d, midi.FaderMsg{Channel: 0, Value: 30}) // below
-	send(d, midi.FaderMsg{Channel: 0, Value: 60}) // sync
+	send(d, midi.FaderMsg{Channel: 0, Value: 3840}) // 30*128; below target
+	send(d, midi.FaderMsg{Channel: 0, Value: 7680}) // 60*128; syncs within tolerance
 
 	d.SetPinned(0, true)
 	// Page switch doesn't call ResetStrip for pinned channels.
@@ -536,8 +562,8 @@ func TestStopDebouncesDuplicatePresses(t *testing.T) {
 func TestUpdateBindingMetadataPreservesFaderStateAndEnablesMPRIS(t *testing.T) {
 	d := New(newFakePW())
 	d.Bind(0, 42, "Zen", audio.KindSource, "")
-	send(d, midi.FaderMsg{Channel: 0, Value: 0})  // sync at zero
-	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // move to working position
+	send(d, midi.FaderMsg{Channel: 0, Value: 0})    // sync at zero
+	send(d, midi.FaderMsg{Channel: 0, Value: 8192}) // move to working position
 	before := d.Snapshot()[0]
 	if !before.Synced {
 		t.Fatal("expected channel to be synced before metadata refresh")
@@ -751,7 +777,7 @@ func TestUnbind(t *testing.T) {
 		t.Fatalf("unbind should clear stream metadata, got %+v", snap[0])
 	}
 
-	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	send(d, midi.FaderMsg{Channel: 0, Value: 8192})
 	if len(pw.volumes) != 0 {
 		t.Fatal("unbound after Unbind should not call SetVolume")
 	}

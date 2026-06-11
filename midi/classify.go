@@ -11,8 +11,8 @@ func Classify(raw [3]byte) (Msg, bool) {
 		return classifyButton(data1, pressed)
 
 	case status >= 0xe0 && status <= 0xe7:
-		// Pitchbend faders: data1 = LSB (ignored), data2 = MSB → 0–127 volume
-		return FaderMsg{Channel: int(status & 0x07), Value: data2}, true
+		// Pitchbend faders: full 14-bit value from (MSB<<7)|LSB → 0–16383
+		return FaderMsg{Channel: int(status & 0x07), Value: uint16(data2)<<7 | uint16(data1)}, true
 
 	case status == 0xb0 && data1 >= 16 && data1 <= 23:
 		// Relative knobs: 1 = increment, 65 = decrement

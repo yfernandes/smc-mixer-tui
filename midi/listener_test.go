@@ -40,7 +40,7 @@ func TestReadMIDI_ThreeMessageTypes(t *testing.T) {
 	if b, ok := msgs[0].(ButtonMsg); !ok || b.Kind != ButtonMute || b.Channel != 0 || !b.Pressed {
 		t.Errorf("msg[0]: got %+v", msgs[0])
 	}
-	if f, ok := msgs[1].(FaderMsg); !ok || f.Channel != 2 || f.Value != 0x60 {
+	if f, ok := msgs[1].(FaderMsg); !ok || f.Channel != 2 || f.Value != uint16(0x60)<<7 {
 		t.Errorf("msg[1]: got %+v", msgs[1])
 	}
 	if k, ok := msgs[2].(KnobMsg); !ok || k.Channel != 1 || k.Delta != 1 {

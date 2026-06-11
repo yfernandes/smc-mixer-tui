@@ -12,7 +12,7 @@ func TestClassifyFaders(t *testing.T) {
 		if !ok {
 			t.Fatalf("ch%d: want FaderMsg, got %T", ch, msg)
 		}
-		if f.Channel != ch || f.Value != 0x60 {
+		if f.Channel != ch || f.Value != uint16(0x60)<<7 {
 			t.Fatalf("ch%d: got Channel=%d Value=%d", ch, f.Channel, f.Value)
 		}
 	}

@@ -43,10 +43,11 @@ type GlobalMsg struct {
 	Pressed bool
 }
 
-// FaderMsg is emitted for pitchbend faders (0xe0–0xe7), MSB only.
+// FaderMsg is emitted for pitchbend faders (0xe0–0xe7).
+// Value is the full 14-bit pitch-bend position: (MSB<<7)|LSB, range 0–16383.
 type FaderMsg struct {
-	Channel int   // 0–7
-	Value   uint8 // 0–127
+	Channel int    // 0–7
+	Value   uint16 // 0–16383
 }
 
 // KnobMsg is emitted for relative CC knobs (CC 16–23).

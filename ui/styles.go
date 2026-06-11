@@ -75,7 +75,13 @@ var (
 	kindHdrSrcStyle  = lipgloss.NewStyle().Foreground(colorSrc).Faint(true)
 	kindHdrSinkStyle = lipgloss.NewStyle().Foreground(colorSink).Faint(true)
 
-	// pickupArrowStyle highlights the sync-direction arrow in the volume label.
+	// Dual fader bar styles.
+	hwFaderStyle   = lipgloss.NewStyle().Foreground(colorHot)   // HW bar — red (physical position)
+	appFaderStyle  = lipgloss.NewStyle().Foreground(colorGreen) // APP bar unsynced — green (PipeWire target)
+	syncFaderStyle = lipgloss.NewStyle().Foreground(colorFG)    // both bars synced — white
+	hwUnknownStyle = lipgloss.NewStyle().Foreground(colorGold)  // HW floor marker before first CC — yellow
+
+	// pickupArrowStyle highlights the volume label when the channel is awaiting sync.
 	pickupArrowStyle = lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
 
 	// Device-type subtitle styles used in split-strip zones.

@@ -79,6 +79,7 @@ func TestSnapshotWireRoundTripPreservesClientVisibleChannelState(t *testing.T) {
 		MPRISName:      "firefox.instance_1",
 		ActualVolume:   0.45,
 		FaderPos:       0.44,
+		FaderPosKnown:  true,
 		LastSetVol:     0.43,
 		Synced:         true,
 		Knob:           65,
