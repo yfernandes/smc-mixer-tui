@@ -71,17 +71,31 @@ func faderBar(val float64, width int) string {
 // '▓' vs '░' keeps bars distinct on color-free terminals; color is the primary cue.
 func dualFaderRows(hw, app float64, hwKnown, appBound, synced bool, height, width int) []string {
 	const (
-		hwChar        = "▓▓" // dense block — hardware position (2 chars wide)
-		appChar       = "░░" // light block — application target (2 chars wide)
-		barW          = 2    // each bar is 2 chars wide
+		fullChar      = "▒▒"  // U+2592 medium shade — full cell (2 chars wide)
+		halfChar      = "🮏🮏"  // U+1FB8F lower-half medium shade — bottom half only (2 chars wide)
+		barW          = 2     // each bar is 2 chars wide
 		tickChar      = " ▔ " // U+2594 upper-eighth block, 3 chars total
 		finalTickChar = " 🮀 " // U+1FB80 upper+lower eighth block, 3 chars total
-		tickW         = 3    // visual width of tickChar / finalTickChar
+		tickW         = 3     // visual width of tickChar / finalTickChar
 	)
 	rightPad := strings.Repeat(" ", max(0, width-tickW-barW*2))
 
-	hwFilled := max(0, min(height, int(math.Round(hw*float64(height)))))
-	appFilled := max(0, min(height, int(math.Round(app*float64(height)))))
+	// Half-row resolution: each cell represents 2 half-steps.
+	// halfFilled=1 → bottom half of row 0; halfFilled=2 → full row 0; etc.
+	hwHalf := max(0, min(height*2, int(math.Round(hw*float64(height)*2))))
+	appHalf := max(0, min(height*2, int(math.Round(app*float64(height)*2))))
+
+	barCell := func(halfFilled, fromBottom int, style lipgloss.Style) string {
+		units := halfFilled - fromBottom*2
+		switch {
+		case units >= 2:
+			return style.Render(fullChar)
+		case units == 1:
+			return style.Render(halfChar)
+		default:
+			return "  "
+		}
+	}
 
 	rows := make([]string, height)
 	for i := range height {
@@ -90,36 +104,30 @@ func dualFaderRows(hw, app float64, hwKnown, appBound, synced bool, height, widt
 		var hwS string
 		if !hwKnown {
 			if fromBottom == 0 {
-				hwS = hwUnknownStyle.Render(hwChar)
+				hwS = hwUnknownStyle.Render(fullChar)
 			} else {
 				hwS = "  "
 			}
-		} else if fromBottom < hwFilled {
-			if synced {
-				hwS = syncFaderStyle.Render(hwChar)
-			} else {
-				hwS = hwFaderStyle.Render(hwChar)
-			}
+		} else if synced {
+			hwS = barCell(hwHalf, fromBottom, syncFaderStyle)
 		} else {
-			hwS = "  "
+			hwS = barCell(hwHalf, fromBottom, hwFaderStyle)
 		}
 
 		var appS string
-		if appBound && fromBottom < appFilled {
+		if appBound {
 			if synced {
-				appS = syncFaderStyle.Render(appChar)
+				appS = barCell(appHalf, fromBottom, syncFaderStyle)
 			} else {
-				appS = appFaderStyle.Render(appChar)
+				appS = barCell(appHalf, fromBottom, appFaderStyle)
 			}
-		} else {
-			appS = "  "
 		}
 
 		tick := tickChar
 		if fromBottom == 0 {
 			tick = finalTickChar
 		}
-		rows[i] = tick + hwS + appS + rightPad
+		rows[i] = hwS + tick + appS + rightPad
 	}
 	return rows
 }

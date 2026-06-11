@@ -74,36 +74,50 @@ func TestDualFaderRows_HWUnknownShowsFloorOnly(t *testing.T) {
 	// When hwKnown=false, only the bottom row should carry HW content.
 	rows := dualFaderRows(0.8, 0, false, false, false, 5, 8)
 	for i, row := range rows[:len(rows)-1] {
-		// Non-bottom rows: no HW block character.
-		if strings.Contains(row, "▓") {
+		if strings.Contains(row, "▒") || strings.Contains(row, "🮏") {
 			t.Errorf("row %d: unexpected HW block in unknown state: %q", i, row)
 		}
 	}
-	// Bottom row must contain the HW floor marker.
-	if !strings.Contains(rows[len(rows)-1], "▓") {
+	// Bottom row must contain the HW floor marker (full cell).
+	if !strings.Contains(rows[len(rows)-1], "▒") {
 		t.Errorf("bottom row: missing HW floor marker in unknown state")
 	}
 }
 
 func TestDualFaderRows_AppNotShownWhenUnbound(t *testing.T) {
-	rows := dualFaderRows(1.0, 1.0, true, false, false, 5, 8)
-	for _, row := range rows {
-		if strings.Contains(row, "░") {
-			t.Errorf("APP bar should not appear when unbound: %q", row)
+	// hw=0 so HW bar contributes no block chars; any ▒/🮏 would come from APP.
+	rows := dualFaderRows(0, 1.0, true, false, false, 5, 8)
+	allContent := strings.Join(rows, "")
+	if strings.Contains(allContent, "▒") || strings.Contains(allContent, "🮏") {
+		t.Errorf("APP bar should not appear when unbound")
+	}
+}
+
+func TestDualFaderRows_HalfResolution(t *testing.T) {
+	// At exactly 1 half-step (1 out of height*2), only the lower half of the
+	// bottom row should be filled; all other rows and the full block are absent.
+	height := 4
+	vol := 1.0 / (float64(height) * 2) // exactly 1 half-step
+	rows := dualFaderRows(vol, 0, true, false, false, height, 8)
+	allContent := strings.Join(rows, "")
+	if strings.Contains(allContent, "▒") {
+		t.Error("at 1 half-step, no full blocks expected")
+	}
+	if !strings.Contains(allContent, "🮏") {
+		t.Error("at 1 half-step, lower-half block expected in bottom row")
+	}
+	// Upper rows must be empty (no block chars).
+	for i, row := range rows[:len(rows)-1] {
+		if strings.Contains(row, "🮏") {
+			t.Errorf("row %d: unexpected half-block above the fill level", i)
 		}
 	}
 }
 
 func TestDualFaderRows_BothWhiteWhenSynced(t *testing.T) {
-	// Synced: both bars should use syncFaderStyle; neither hwFaderStyle nor appFaderStyle.
-	// We can't easily inspect the style, but we can verify both block chars appear
-	// when faders are high and synced=true.
 	rows := dualFaderRows(1.0, 1.0, true, true, true, 5, 8)
 	allContent := strings.Join(rows, "")
-	if !strings.Contains(allContent, "▓") {
-		t.Error("synced: HW blocks should be present")
-	}
-	if !strings.Contains(allContent, "░") {
-		t.Error("synced: APP blocks should be present")
+	if !strings.Contains(allContent, "▒") {
+		t.Error("synced: block chars should be present")
 	}
 }
