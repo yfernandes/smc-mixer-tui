@@ -55,7 +55,7 @@ func planChannelBinding(cfg *config.Config, activePage string, ch int, current d
 
 	dev := cfg.ChannelForPage(activePage, ch)
 	if dev == nil {
-		if live {
+		if live && !current.UserBound {
 			return bindingAction{ch: ch, lose: true}, true
 		}
 		return bindingAction{}, false

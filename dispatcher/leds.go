@@ -31,7 +31,8 @@ func (d *Dispatcher) SyncLEDs() {
 		leds.SetButtonLED(ch, midi.ButtonSolo, c.Solo)
 		leds.SetButtonLED(ch, midi.ButtonMute, c.Mute || c.SoloMuted)
 		leds.SetButtonLED(ch, midi.ButtonStop, c.Stop)
-		// Fader LED blinks when bound AND synced; off when unbound or awaiting pickup.
+		// The SMC46 LED mirrors physical fader position; software cannot override it.
+		// This call is retained for bind/unbind events (clears the LED when unbound at zero).
 		leds.SetFaderLED(ch, c.StreamID != nil && c.Synced)
 	}
 	for i, action := range globalLEDActions {

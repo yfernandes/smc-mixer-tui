@@ -27,7 +27,7 @@ func (d *Dispatcher) onKnob(ctx context.Context, m midi.KnobMsg) {
 
 	if ctrl != nil {
 		volA, volB := crossfadeGains(k)
-		if d.volDebounce == 0 {
+		if d.volThrottle == 0 {
 			if err := ctrl.SetGains(ctx, volA, volB); err != nil {
 				log.Printf("knob ch%d crossfade: %v", m.Channel, err)
 			}
@@ -46,7 +46,7 @@ func (d *Dispatcher) onKnob(ctx context.Context, m midi.KnobMsg) {
 		return
 	}
 	vol := float64(k) / 127.0
-	if d.volDebounce == 0 {
+	if d.volThrottle == 0 {
 		if err := d.pw.SetVolume(ctx, *knobID, vol); err != nil {
 			log.Printf("knob ch%d gain: %v", m.Channel, err)
 		}
@@ -87,84 +87,52 @@ func (d *Dispatcher) SetCrossfader(ch int, ctrl CrossfaderController, nameA, nam
 	d.channels[ch].CrossSinkBName = nameB
 }
 
-// runKnobVolWorker debounces PipeWire volume writes for knob-bound devices (gain type).
+// runKnobVolWorker throttles PipeWire volume writes for knob-bound devices (gain type).
 func (d *Dispatcher) runKnobVolWorker(ctx context.Context, ch int) {
-	var pending float64
-	hasPending := false
-
-	timer := time.NewTimer(d.volDebounce)
-	if !timer.Stop() {
-		<-timer.C
-	}
-
+	ticker := time.NewTicker(d.volThrottle)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case vol := <-d.knobVolWorkers[ch]:
-			pending = vol
-			hasPending = true
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
+		case <-ticker.C:
+			select {
+			case vol := <-d.knobVolWorkers[ch]:
+				d.mu.RLock()
+				knobID := d.channels[ch].KnobStreamID
+				d.mu.RUnlock()
+				if knobID != nil {
+					if err := d.pw.SetVolume(ctx, *knobID, vol); err != nil {
+						log.Printf("knob vol worker ch%d: %v", ch, err)
+					}
 				}
+			default:
 			}
-			timer.Reset(d.volDebounce)
-		case <-timer.C:
-			if !hasPending {
-				continue
-			}
-			d.mu.RLock()
-			knobID := d.channels[ch].KnobStreamID
-			d.mu.RUnlock()
-			if knobID != nil {
-				if err := d.pw.SetVolume(ctx, *knobID, pending); err != nil {
-					log.Printf("knob vol worker ch%d: %v", ch, err)
-				}
-			}
-			hasPending = false
 		}
 	}
 }
 
-// runCrossWorker debounces PipeWire crossfader gain writes for one channel.
+// runCrossWorker throttles PipeWire crossfader gain writes for one channel.
 func (d *Dispatcher) runCrossWorker(ctx context.Context, ch int) {
-	var pending crossGains
-	hasPending := false
-
-	timer := time.NewTimer(d.volDebounce)
-	if !timer.Stop() {
-		<-timer.C
-	}
-
+	ticker := time.NewTicker(d.volThrottle)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case gains := <-d.crossWorkers[ch]:
-			pending = gains
-			hasPending = true
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
+		case <-ticker.C:
+			select {
+			case gains := <-d.crossWorkers[ch]:
+				d.mu.RLock()
+				ctrl := d.channels[ch].crossfader
+				d.mu.RUnlock()
+				if ctrl != nil {
+					if err := ctrl.SetGains(ctx, gains[0], gains[1]); err != nil {
+						log.Printf("cross worker ch%d: %v", ch, err)
+					}
 				}
+			default:
 			}
-			timer.Reset(d.volDebounce)
-		case <-timer.C:
-			if !hasPending {
-				continue
-			}
-			d.mu.RLock()
-			ctrl := d.channels[ch].crossfader
-			d.mu.RUnlock()
-			if ctrl != nil {
-				if err := ctrl.SetGains(ctx, pending[0], pending[1]); err != nil {
-					log.Printf("cross worker ch%d: %v", ch, err)
-				}
-			}
-			hasPending = false
 		}
 	}
 }

@@ -12,8 +12,18 @@ import (
 
 type crossGains = [2]float64
 
-// PickupThreshold is the fader-to-actual-volume tolerance for sync detection (≈2 MIDI steps out of 127).
+// PickupThreshold is the default fader-to-actual-volume tolerance for soft pickup (≈2 MIDI steps out of 127).
 const PickupThreshold = 2.0 / 127.0
+
+// SyncMode determines how a channel fader re-establishes control after being unsynced.
+type SyncMode uint8
+
+const (
+	// SyncModeZero is the default: fader must cross 0 before controlling volume.
+	SyncModeZero SyncMode = 0
+	// SyncModeSoftPickup requires the fader to reach the current actual volume within tolerance.
+	SyncModeSoftPickup SyncMode = 1
+)
 
 // PipeWire is the subset of pipewire.Client used by the dispatcher.
 type PipeWire interface {
@@ -52,7 +62,8 @@ type Channel struct {
 	ActualVolume    float64        // volume last reported by PipeWire; display only
 	FaderPos        float64        // physical hardware fader position, 0.0–1.0
 	LastSetVol      float64        // last volume we sent to PipeWire; -1 = never
-	Synced          bool           // fader has passed through zero and now controls PipeWire
+	Synced          bool           // fader has established sync and now controls PipeWire
+	SyncMode        SyncMode       // how this channel establishes fader sync; set at bind time from config
 	Knob            int            // 0–127, accumulated relative position; starts at 64
 	Mute            bool           // user-set mute
 	SoloMuted       bool           // muted as a side-effect of another same-kind channel being soloed
@@ -61,6 +72,15 @@ type Channel struct {
 	Stop            bool
 	Advanced        bool // advanced mode is active; R LED blinks, controls remapped
 	Pinned          bool // channel is pinned to the main page; R LED solid on
+
+	// pickupTol is the soft pickup tolerance (0 → use PickupThreshold).
+	// pickupSide records which side of ActualVolume the fader was on when sync was last lost:
+	//   -1 = below target, +1 = above target, 0 = unset (re-evaluated on next fader message).
+	// prevFaderPos is the fader position from the previous moveFader call, used by soft
+	// pickup to detect crossings and handle fast sweeps.
+	pickupTol    float64
+	pickupSide   int8
+	prevFaderPos float64
 
 	// KnobStreamID is the PipeWire node ID that this channel's knob controls for
 	// gain writes (main page independent knob slots). nil means knob is either a
@@ -112,9 +132,9 @@ type Dispatcher struct {
 	blinkGen [8]uint32
 
 	// Async PipeWire write workers. Each channel has a size-1 latest-value buffer.
-	// When volDebounce == 0 (default / tests), writes are synchronous and workers are unused.
+	// When volThrottle == 0 (default / tests), writes are synchronous and workers are unused.
 	// Run is single-use: calling it a second time logs an error and returns immediately.
-	volDebounce    time.Duration
+	volThrottle    time.Duration
 	volWorkers     [8]chan float64
 	crossWorkers   [8]chan crossGains
 	knobVolWorkers [8]chan float64

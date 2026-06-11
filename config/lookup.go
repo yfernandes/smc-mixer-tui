@@ -94,6 +94,28 @@ func (c *Config) KnobForDevice(deviceKey string) (KnobConfig, bool) {
 	return c.effectiveKnob(dev), true
 }
 
+// EffectiveSyncMode returns the sync mode for a device, falling back to the global default.
+// When both are unset, SyncModeZero is returned.
+func (c *Config) EffectiveSyncMode(dev *DeviceConfig) SyncMode {
+	if dev != nil && dev.SyncMode != SyncModeDefault {
+		return dev.SyncMode
+	}
+	if c.Defaults.SyncMode != SyncModeDefault {
+		return c.Defaults.SyncMode
+	}
+	return SyncModeZero
+}
+
+// EffectivePickupToleranceCC returns the soft pickup tolerance in CC units (1–127).
+// If not configured, the default of 2 CC units is returned.
+func (c *Config) EffectivePickupToleranceCC() int {
+	cc := c.Defaults.PickupToleranceCC
+	if cc <= 0 || cc > 127 {
+		return 2
+	}
+	return cc
+}
+
 // ResolveOutput resolves a device key to its match string (the PipeWire device description).
 // If the key is not found in devices, the key itself is returned.
 func (c *Config) ResolveOutput(key string) string {

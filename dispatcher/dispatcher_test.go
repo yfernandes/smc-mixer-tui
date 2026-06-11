@@ -155,6 +155,178 @@ func TestFaderUnboundUpdatesStateOnly(t *testing.T) {
 	}
 }
 
+// — soft pickup tests —
+
+// setSoftPickup is a test helper that configures channel ch for soft pickup mode
+// with the default tolerance.
+func setSoftPickup(d *Dispatcher, ch int) {
+	d.SetChannelSyncMode(ch, SyncModeSoftPickup, PickupThreshold)
+}
+
+func TestSoftPickupSyncsWhenFaderCrossesTarget(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 80.0/127.0) // target at CC 80
+
+	// Fader starts below target; no sync yet.
+	send(d, midi.FaderMsg{Channel: 0, Value: 60}) // below 80-2=78
+	if d.Snapshot()[0].Synced {
+		t.Fatal("should not be synced before crossing target")
+	}
+	if _, called := pw.volumes[42]; called {
+		t.Fatal("SetVolume must not be called before sync")
+	}
+
+	// Fader crosses into tolerance window from below.
+	send(d, midi.FaderMsg{Channel: 0, Value: 79}) // 79 >= 78 (80-2): enters window
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("should be synced after fader crosses target from below")
+	}
+	if !approxEq(pw.volumes[42], 79.0/127.0) {
+		t.Fatalf("SetVolume = %.4f, want %.4f", pw.volumes[42], 79.0/127.0)
+	}
+}
+
+func TestSoftPickupSyncsFromAbove(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 40.0/127.0) // target at CC 40
+
+	// Fader starts above target.
+	send(d, midi.FaderMsg{Channel: 0, Value: 80}) // above 40+2=42
+	if d.Snapshot()[0].Synced {
+		t.Fatal("should not be synced before crossing target from above")
+	}
+
+	// Sweep down into window.
+	send(d, midi.FaderMsg{Channel: 0, Value: 41}) // 41 <= 42 (40+2): enters window
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("should be synced after fader crosses target from above")
+	}
+}
+
+func TestSoftPickupIgnoresFaderOnWrongSide(t *testing.T) {
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 80.0/127.0) // target at CC 80
+
+	// Fader starts above target and moves further above; must not sync.
+	send(d, midi.FaderMsg{Channel: 0, Value: 100})
+	send(d, midi.FaderMsg{Channel: 0, Value: 110})
+	send(d, midi.FaderMsg{Channel: 0, Value: 120})
+	if d.Snapshot()[0].Synced {
+		t.Fatal("fader moving away from target (wrong direction) must not sync")
+	}
+	if _, called := pw.volumes[42]; called {
+		t.Fatal("SetVolume must not be called before sync")
+	}
+}
+
+func TestSoftPickupFastSweepOvershoot(t *testing.T) {
+	// Fader was below target; a single tick jumps above target (overshoot).
+	// Should still sync because the fader crossed through the window.
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 60.0/127.0) // target at CC 60
+
+	send(d, midi.FaderMsg{Channel: 0, Value: 30})  // prev=30, below target-2=58
+	send(d, midi.FaderMsg{Channel: 0, Value: 100}) // jumped over target (30<58, 100>=58)
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("fast sweep overshoot should trigger sync")
+	}
+}
+
+func TestSoftPickupAlreadyAtTarget(t *testing.T) {
+	// Fader is already within tolerance of target on first message after bind.
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 64.0/127.0) // target at CC 64
+
+	// Fader at CC 64 — within ±2 tolerance: sync immediately.
+	send(d, midi.FaderMsg{Channel: 0, Value: 64})
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("fader already at target should sync immediately")
+	}
+}
+
+func TestSoftPickupTargetUpdateResetsPickupSide(t *testing.T) {
+	// Startup race: ActualVolume was 0 when fader first moved (pickupSide=above).
+	// When the real volume arrives via UpdateActualVolume, pickupSide resets and
+	// approaching from below should work correctly.
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+
+	// First fader message while ActualVolume=0 (bind resets it to 0).
+	// Fader at 0.5 is above 0: pickupSide=above.
+	send(d, midi.FaderMsg{Channel: 0, Value: 64}) // above target=0
+
+	// Polling updates the real volume; should reset pickupSide.
+	d.UpdateActualVolume(0, 80.0/127.0) // target=80, fader=64 is now below
+
+	// Next fader message: pickupSide should now be below; sweep up to sync.
+	send(d, midi.FaderMsg{Channel: 0, Value: 70}) // still below 80-2=78
+	if d.Snapshot()[0].Synced {
+		t.Fatal("should not be synced before crossing new target")
+	}
+	send(d, midi.FaderMsg{Channel: 0, Value: 79}) // enters window from below
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("should sync after crossing target post-ActualVolume-update")
+	}
+}
+
+func TestSoftPickupNoUnsyncAfterSync(t *testing.T) {
+	// Once synced, moving the fader should never un-sync.
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 60.0/127.0)
+
+	send(d, midi.FaderMsg{Channel: 0, Value: 30}) // below
+	send(d, midi.FaderMsg{Channel: 0, Value: 60}) // syncs at target
+
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("should be synced at target")
+	}
+
+	// Large movement away from where we synced.
+	send(d, midi.FaderMsg{Channel: 0, Value: 127})
+	send(d, midi.FaderMsg{Channel: 0, Value: 0})
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("synced channel must not un-sync from fader movement")
+	}
+}
+
+func TestSoftPickupPinnedChannelPreservesSync(t *testing.T) {
+	// Pinned channels are not reset on page switch; their sync state persists.
+	pw := newFakePW()
+	d := New(pw)
+	d.Bind(0, 42, "Spotify", audio.KindSource, "")
+	setSoftPickup(d, 0)
+	d.UpdateActualVolume(0, 60.0/127.0)
+
+	send(d, midi.FaderMsg{Channel: 0, Value: 30}) // below
+	send(d, midi.FaderMsg{Channel: 0, Value: 60}) // sync
+
+	d.SetPinned(0, true)
+	// Page switch doesn't call ResetStrip for pinned channels.
+	if !d.Snapshot()[0].Synced {
+		t.Fatal("pinned channel sync state must be preserved")
+	}
+}
+
 // — knob tests —
 
 func TestKnobStartsAtCenter(t *testing.T) {

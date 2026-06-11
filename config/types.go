@@ -21,11 +21,25 @@ type MIDIConfig struct {
 	Device string `yaml:"device"` // e.g. "/dev/midi1"; "" triggers auto-detect
 }
 
+// SyncMode determines how a channel fader re-establishes control after being unsynced.
+type SyncMode string
+
+const (
+	// SyncModeDefault inherits the global default from DefaultsConfig.SyncMode; "zero" if absent.
+	SyncModeDefault SyncMode = ""
+	// SyncModeZero requires the fader to cross 0 before it controls volume.
+	SyncModeZero SyncMode = "zero"
+	// SyncModeSoftPickup requires the fader to cross the current actual volume (within tolerance).
+	SyncModeSoftPickup SyncMode = "soft_pickup"
+)
+
 // DefaultsConfig sets the default knob behaviour per device type.
 type DefaultsConfig struct {
-	InputKnob    KnobConfig `yaml:"input-knob"`
-	PlaybackKnob KnobConfig `yaml:"playback-knob"`
-	OutputKnob   KnobConfig `yaml:"output-knob"`
+	InputKnob           KnobConfig `yaml:"input-knob"`
+	PlaybackKnob        KnobConfig `yaml:"playback-knob"`
+	OutputKnob          KnobConfig `yaml:"output-knob"`
+	SyncMode            SyncMode   `yaml:"sync_mode,omitempty"`          // global default; "zero" if absent
+	PickupToleranceCC   int        `yaml:"pickup_tolerance,omitempty"`   // soft pickup window in CC units (1-127); default 2
 }
 
 // KnobConfig describes how a hardware knob is used.
@@ -55,6 +69,7 @@ type DeviceConfig struct {
 	MatchTitle string          `yaml:"match-title,omitempty"` // case-insensitive substring on window title
 	Knob       *KnobConfig     `yaml:"knob,omitempty"`        // per-device override; nil = use default for type
 	Advanced   *AdvancedConfig `yaml:"advanced,omitempty"`    // reserved; not yet implemented
+	SyncMode   SyncMode        `yaml:"sync_mode,omitempty"`   // per-device override; "" inherits global default
 }
 
 // AdvancedConfig holds future per-device advanced behaviors. Not yet implemented.

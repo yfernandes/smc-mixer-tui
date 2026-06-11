@@ -9,17 +9,28 @@ import (
 )
 
 // UpdateActualVolume records the PipeWire-reported volume for a channel.
-// It only updates display state; synced channels are never desynced by polling
-// because the fader is the source of truth.
+// It only updates display state; synced channels are never desynced by polling.
+// For unsynced channels in soft pickup mode, it resets pickupSide so the next
+// fader message recomputes direction relative to the new target.
 func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
 	d.mu.Lock()
+	prev := d.channels[ch].ActualVolume
 	d.channels[ch].ActualVolume = vol
+	if !d.channels[ch].Synced && vol != prev {
+		// Target changed while unsynced: stale pickupSide would track the wrong side.
+		// Reset to 0 so moveSoftPickup re-evaluates on the next fader message.
+		d.channels[ch].pickupSide = 0
+	}
 	bound := d.channels[ch].StreamID != nil
 	synced := d.channels[ch].Synced
 	leds := d.leds
 	d.mu.Unlock()
 
 	if leds != nil {
+		// The SMC46 fader LED reflects physical fader position: it blinks whenever
+		// the fader is above ~3% travel, regardless of software commands. We cannot
+		// use SetFaderLED to independently signal sync state. The call here is kept
+		// for when the channel loses its binding (turns off the LED at zero).
 		leds.SetFaderLED(ch, bound && synced)
 	}
 }
@@ -47,7 +58,7 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 		return
 	}
 
-	if d.volDebounce == 0 {
+	if d.volThrottle == 0 {
 		if err := d.pw.SetVolume(ctx, update.streamID, faderPos); err != nil {
 			log.Printf("fader ch%d: SetVolume(%d, %.3f): %v", m.Channel, update.streamID, faderPos, err)
 		}
@@ -61,44 +72,29 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 	d.volWorkers[m.Channel] <- faderPos
 }
 
-// runVolWorker debounces PipeWire volume writes for one channel.
-// It fires only after volDebounce of silence, sending the latest fader position.
+// runVolWorker throttles PipeWire volume writes for one channel.
+// It fires at most once per volThrottle interval, always with the latest value.
+// The goroutine blocks during the wpctl call, so at most one call is in-flight at a time.
 func (d *Dispatcher) runVolWorker(ctx context.Context, ch int) {
-	var pending float64
-	hasPending := false
-
-	timer := time.NewTimer(d.volDebounce)
-	if !timer.Stop() {
-		<-timer.C
-	}
-
+	ticker := time.NewTicker(d.volThrottle)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case vol := <-d.volWorkers[ch]:
-			pending = vol
-			hasPending = true
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
+		case <-ticker.C:
+			select {
+			case vol := <-d.volWorkers[ch]:
+				d.mu.RLock()
+				id, bound := d.channels[ch].boundID()
+				d.mu.RUnlock()
+				if bound {
+					if err := d.pw.SetVolume(ctx, id, vol); err != nil {
+						log.Printf("vol worker ch%d: %v", ch, err)
+					}
 				}
+			default:
 			}
-			timer.Reset(d.volDebounce)
-		case <-timer.C:
-			if !hasPending {
-				continue
-			}
-			d.mu.RLock()
-			id, bound := d.channels[ch].boundID()
-			d.mu.RUnlock()
-			if bound {
-				if err := d.pw.SetVolume(ctx, id, pending); err != nil {
-					log.Printf("vol worker ch%d: %v", ch, err)
-				}
-			}
-			hasPending = false
 		}
 	}
 }

@@ -479,6 +479,30 @@ func TestPlanBindingsPIDRebindNotTriggeredWhenLive(t *testing.T) {
 	}
 }
 
+func TestPlanBindingsUserBoundOnUnconfiguredChannelNotLost(t *testing.T) {
+	// Regression: user manually binds a stream to a channel with no config entry.
+	// planBindings must not evict it — the previous bug returned lose:true every poll,
+	// causing a ping-pong where the binding oscillated between two channels.
+	cfg := &config.Config{}
+	snap := [8]dispatcher.Channel{}
+	id := uint32(42)
+	snap[4].StreamID = &id
+	snap[4].UserBound = true
+	snap[4].BoundPID = 9999
+
+	ss := []streams.EnrichedStream{
+		{ID: 42, Name: "HogwartsLegacy", BindKey: "hogwarts", Kind: audio.KindSource, PID: 9999},
+	}
+
+	actions := planBindings(cfg, "main", snap, ss)
+
+	for _, a := range actions {
+		if a.ch == 4 && a.lose {
+			t.Fatalf("user-bound channel on unconfigured slot must not be evicted, got lose action: %+v", a)
+		}
+	}
+}
+
 func stream(id uint32, name, bindKey string, kind audio.NodeKind) streams.EnrichedStream {
 	return streams.EnrichedStream{
 		ID:      id,

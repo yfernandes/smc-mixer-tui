@@ -10,6 +10,8 @@ defaults:
     bus-b: speakers
   output-knob:
     type: none
+  # sync_mode: "zero"        # "zero" (default) or "soft_pickup"
+  # pickup_tolerance: 2      # soft_pickup only: ±N CC units for crossing detection (default 2)
 
 devices:
   noise:
@@ -41,6 +43,7 @@ devices:
     label: "Fifine Mic"
     type: input
     match: "fifine Microphone Analog Stereo"
+    # sync_mode: soft_pickup  # per-device override; inherits defaults.sync_mode if absent
     knob:
       type: gain
     advanced:

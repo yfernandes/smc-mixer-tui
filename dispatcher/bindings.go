@@ -140,6 +140,13 @@ func (d *Dispatcher) ResetStrip(ch int) {
 	if oldCancel != nil {
 		oldCancel()
 	}
+	// Discard any pending throttled volume write queued before the page switch.
+	// The worker checks bound before calling SetVolume, but draining here prevents
+	// a stale value from being applied to the new stream after rebind.
+	select {
+	case <-d.volWorkers[ch]:
+	default:
+	}
 	if leds != nil {
 		leds.SetFaderLED(ch, false)
 		leds.SetButtonLED(ch, midi.ButtonMute, false)
@@ -147,6 +154,18 @@ func (d *Dispatcher) ResetStrip(ch int) {
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
+}
+
+// SetChannelSyncMode configures fader sync behaviour for channel ch.
+// mode selects zero (drive-to-zero) or soft_pickup (cross-actual-volume) detection.
+// tol is the soft pickup tolerance in 0.0–1.0 scale; 0 uses the default PickupThreshold.
+// Call after Bind to apply per-device config; SyncMode persists across Bind calls until
+// explicitly changed.
+func (d *Dispatcher) SetChannelSyncMode(ch int, mode SyncMode, tol float64) {
+	d.mu.Lock()
+	d.channels[ch].SyncMode = mode
+	d.channels[ch].pickupTol = tol
+	d.mu.Unlock()
 }
 
 // BindKnob sets the PipeWire node that this channel's knob controls for gain writes.

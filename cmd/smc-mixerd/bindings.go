@@ -34,16 +34,21 @@ func applyBindings(ctx context.Context, cfg *config.Config, disp *dispatcher.Dis
 			// Stream already matched; only refresh config-derived metadata.
 			dev := cfg.ChannelForPage(activePage, action.ch)
 			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
+			applySyncMode(cfg, disp, action.ch, dev)
 		case action.userBound:
 			// PID-based reconnect: preserve UserBound semantics across stream restarts.
 			snap := disp.Snapshot()
 			disp.UserBind(action.ch, action.id, action.name, action.kind, action.mprisName, snap[action.ch].BoundPID)
 			dev := cfg.ChannelForPage(activePage, action.ch)
 			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
+			applySyncMode(cfg, disp, action.ch, dev)
+			seedActualVolume(ctx, disp, action.ch, action.id, getVol)
 		default:
 			disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
 			dev := cfg.ChannelForPage(activePage, action.ch)
 			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
+			applySyncMode(cfg, disp, action.ch, dev)
+			seedActualVolume(ctx, disp, action.ch, action.id, getVol)
 		}
 	}
 	applyKnobBindings(ctx, cfg, disp, activePage, ss, getVol)
@@ -66,6 +71,31 @@ func syncPinnedFlags(cfg *config.Config, disp *dispatcher.Dispatcher, activePage
 		}
 		disp.SetPinned(ch, isPinned)
 	}
+}
+
+// seedActualVolume fetches the current PipeWire volume for a newly-bound stream and
+// immediately populates ActualVolume. Without this, bind() leaves ActualVolume=0 and
+// moveSoftPickup would treat 0 as the target, causing a false sync when the fader
+// passes through zero before the volume poller runs (~50 ms later).
+func seedActualVolume(ctx context.Context, disp *dispatcher.Dispatcher, ch int, id uint32, getVol knobVolumeGetter) {
+	if getVol == nil {
+		return
+	}
+	if vol, _, err := getVol(ctx, id); err == nil {
+		disp.UpdateActualVolume(ch, vol)
+	}
+}
+
+// applySyncMode applies the effective sync mode and pickup tolerance from config to channel ch.
+// It is idempotent: safe to call on every applyBindings pass, including syncSpec refreshes.
+func applySyncMode(cfg *config.Config, disp *dispatcher.Dispatcher, ch int, dev *config.DeviceConfig) {
+	cfgMode := cfg.EffectiveSyncMode(dev)
+	var dispMode dispatcher.SyncMode
+	if cfgMode == config.SyncModeSoftPickup {
+		dispMode = dispatcher.SyncModeSoftPickup
+	}
+	tol := float64(cfg.EffectivePickupToleranceCC()) / 127.0
+	disp.SetChannelSyncMode(ch, dispMode, tol)
 }
 
 func advancedSpecFrom(dev *config.DeviceConfig) *dispatcher.AdvancedSpec {

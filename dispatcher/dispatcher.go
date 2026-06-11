@@ -9,8 +9,8 @@ import (
 )
 
 // New creates a Dispatcher backed by pw. Knobs start at center (64).
-// By default PipeWire writes are synchronous (volDebounce == 0); call
-// SetVolDebounce before Run to enable debounced async writes.
+// By default PipeWire writes are synchronous (volThrottle == 0); call
+// SetVolThrottle before Run to enable throttled async writes.
 func New(pw PipeWire) *Dispatcher {
 	d := &Dispatcher{pw: pw, activePage: "main"}
 	for i := range d.channels {
@@ -24,11 +24,11 @@ func New(pw PipeWire) *Dispatcher {
 	return d
 }
 
-// SetVolDebounce sets the debounce delay for PipeWire volume writes.
-// Must be called before Run. Production code uses 200ms; tests leave it at 0
-// (synchronous) to avoid goroutine timing issues.
-func (d *Dispatcher) SetVolDebounce(delay time.Duration) {
-	d.volDebounce = delay
+// SetVolThrottle sets the throttle interval for PipeWire volume writes.
+// Must be called before Run. Production code uses 20ms (~50 updates/sec);
+// tests leave it at 0 (synchronous) to avoid goroutine timing issues.
+func (d *Dispatcher) SetVolThrottle(interval time.Duration) {
+	d.volThrottle = interval
 }
 
 // SetMPRISCaller sets (or clears, if nil) the MPRIS playback controller.
@@ -61,7 +61,7 @@ func (d *Dispatcher) Run(ctx context.Context, msgs <-chan midi.Msg) {
 		log.Print("dispatcher: Run called more than once; ignoring second call")
 		return
 	}
-	if d.volDebounce > 0 {
+	if d.volThrottle > 0 {
 		workerCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		for i := range d.volWorkers {

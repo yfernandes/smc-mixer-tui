@@ -51,8 +51,10 @@ func (w *Writer) SetButtonLED(ch int, kind ButtonKind, on bool) {
 	w.write([3]byte{0x90, note, vel})
 }
 
-// SetFaderLED sets the fader-top LED to blink (true) or off (false).
-// The hardware has no solid-on state; threshold for blink is MSB ≥ 4.
+// SetFaderLED attempts to set the fader-top LED to blink (true) or off (false).
+// In practice the LED is driven by the physical fader position, not by this message:
+// software commands are overridden by the hardware and have no observable effect
+// while the fader is above the floor. Retained for the off-at-zero case (binding cleared).
 func (w *Writer) SetFaderLED(ch int, blink bool) {
 	msb := byte(0x00)
 	if blink {

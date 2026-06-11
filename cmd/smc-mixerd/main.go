@@ -63,7 +63,7 @@ func main() {
 	pinned.load(cfg)
 
 	disp := dispatcher.New(pw)
-	disp.SetVolDebounce(200 * time.Millisecond)
+	disp.SetVolThrottle(20 * time.Millisecond)
 	disp.SetMPRISCaller(streams.NewController())
 	disp.SetPinCallback(func(ch int) {
 		page := disp.ActivePage()
