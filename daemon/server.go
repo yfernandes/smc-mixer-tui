@@ -28,6 +28,11 @@ type Server struct {
 
 	streamsMu      sync.RWMutex
 	currentStreams []streams.EnrichedStream
+
+	// AfterCmd is called after each bind/unbind command is applied to the
+	// dispatcher, before BroadcastSnapshot. Use it to update any state that
+	// depends on the current channel snapshot (e.g. crossfader attachment).
+	AfterCmd func(ctx context.Context)
 }
 
 // NewServer creates a Server backed by disp. labels are the per-channel config
@@ -173,6 +178,9 @@ func (s *Server) handleCmd(ctx context.Context, env envelope) {
 		return
 	}
 	cmd.apply(ctx, s)
+	if s.AfterCmd != nil {
+		s.AfterCmd(ctx)
+	}
 	s.BroadcastSnapshot(s.disp.Snapshot())
 }
 

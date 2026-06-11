@@ -145,3 +145,21 @@ func (d *Dispatcher) UpdatePlaybackStatus(ch int, playing bool) {
 		leds.SetButtonLED(ch, midi.ButtonStop, playing)
 	}
 }
+
+// UpdatePlaybackStatusForStream is like UpdatePlaybackStatus but verifies that
+// the channel is still bound to id before updating. This guards against stale-
+// snapshot races in pollChannelVolumes where Unbind ran between Snapshot() and
+// the actual update call.
+func (d *Dispatcher) UpdatePlaybackStatusForStream(ch int, id uint32, playing bool) {
+	d.mu.Lock()
+	if !d.channels[ch].boundTo(id) || d.channels[ch].Stop == playing {
+		d.mu.Unlock()
+		return
+	}
+	d.channels[ch].Stop = playing
+	leds := d.leds
+	d.mu.Unlock()
+	if leds != nil {
+		leds.SetButtonLED(ch, midi.ButtonStop, playing)
+	}
+}

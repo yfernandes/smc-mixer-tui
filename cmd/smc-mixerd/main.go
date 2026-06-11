@@ -81,6 +81,19 @@ func main() {
 	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
 	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath, Version)
+	srv.AfterCmd = func(ctx context.Context) {
+		snap := disp.Snapshot()
+		// Fast synchronous path: update dispatcher knob attachment for any routing
+		// that already exists (e.g. stream moving between channels).
+		manageCrossfaders.Reattach(snap)
+		// Async path: create PipeWire routing for newly-bound streams if the cached
+		// stream list already knows about them. SetupCrossfader sleeps ~190 ms, so
+		// running it inline would stall every bind response.
+		go func() {
+			manageCrossfaders.SyncIfAble(ctx, disp.Snapshot())
+			srv.BroadcastSnapshot(disp.Snapshot())
+		}()
+	}
 	srv.BroadcastStreams(initial)
 
 	go func() {
@@ -229,7 +242,10 @@ func pollChannelVolumes(ctx context.Context, pw *pipewire.Client, disp *dispatch
 			if err == nil {
 				disp.UpdateActualVolume(ch, vol)
 				if c.MPRISName != "" {
-					disp.UpdatePlaybackStatus(ch, streams.IsPlaying(ctx, c.MPRISName))
+					// Pass the stream ID so UpdatePlaybackStatus can verify the channel
+					// is still bound to the same stream (guards against stale-snapshot races
+					// where Unbind ran between Snapshot() and here).
+					disp.UpdatePlaybackStatusForStream(ch, *c.StreamID, streams.IsPlaying(ctx, c.MPRISName))
 				}
 				changed = true
 			}

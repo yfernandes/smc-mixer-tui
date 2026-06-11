@@ -830,3 +830,28 @@ func TestAdvancedBlinkCancelStoredUnderLock(t *testing.T) {
 		t.Fatal("Advanced should be false after page switch")
 	}
 }
+
+func TestUpdatePlaybackStatusForStream(t *testing.T) {
+	d := New(newFakePW())
+	const streamID uint32 = 42
+	d.Bind(0, streamID, "test", audio.KindSource, "player")
+
+	// Normal update: sets Stop=true when stream matches.
+	d.UpdatePlaybackStatusForStream(0, streamID, true)
+	if !d.Snapshot()[0].Stop {
+		t.Fatal("Stop should be true after UpdatePlaybackStatusForStream with matching ID")
+	}
+
+	// Stale-snapshot race: update rejected when ID doesn't match current binding.
+	d.UpdatePlaybackStatusForStream(0, streamID+1, false)
+	if !d.Snapshot()[0].Stop {
+		t.Fatal("Stop should remain true when ID doesn't match (stale-snapshot guard)")
+	}
+
+	// After Unbind, update for the old stream ID must be rejected.
+	d.Unbind(0)
+	d.UpdatePlaybackStatusForStream(0, streamID, true)
+	if d.Snapshot()[0].Stop {
+		t.Fatal("Stop should not be set after Unbind (stale-snapshot guard)")
+	}
+}

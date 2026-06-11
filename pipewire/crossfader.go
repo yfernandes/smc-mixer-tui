@@ -48,6 +48,9 @@ func (c *Client) SetupCrossfader(ctx context.Context, tag string, streamNodeID u
 	// Silence the stream before any graph changes to prevent audible transients.
 	if streamNodeID != 0 {
 		_ = c.SetMute(ctx, streamNodeID, true)
+		// WirePlumber applies the mute asynchronously; wait for it to take effect
+		// before moving the stream to the new null sink.
+		time.Sleep(40 * time.Millisecond)
 	}
 
 	routing, err := c.setupCrossfaderInner(ctx, tag, streamNodeID, streamNodeName, sinkANodeName, sinkBNodeName)
@@ -58,8 +61,10 @@ func (c *Client) SetupCrossfader(ctx context.Context, tag string, streamNodeID u
 		return nil, err
 	}
 
-	// Let the loopback graph fill its initial buffers before unmuting.
-	time.Sleep(60 * time.Millisecond)
+	// The signal path has two loopback hops in series (NullSink→GainSink→HW sink),
+	// each with latency_msec=50. Both must fill their buffers before unmuting or
+	// the partial-buffer audio causes a transient buzz on stream reconnect.
+	time.Sleep(150 * time.Millisecond)
 	if streamNodeID != 0 {
 		_ = c.SetMute(ctx, streamNodeID, false)
 	}

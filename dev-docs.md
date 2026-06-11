@@ -106,6 +106,34 @@ Crossfading is implemented using PulseAudio's `module-null-sink` and `module-loo
 `                  -> Loopback B -> GainSink B -> Loopback 2B -> Sink B`
 The knob controls the volumes of `GainSink A` and `GainSink B` to achieve a plateau crossfade.
 
+## Crossfader Architecture: Current Problems and Planned Refactor
+
+### The Footgun: channel-owns-routing
+
+The current `crossfaderManager` keys active routing on **channel slot** (`active [8]*crossfaderState`). When a stream binds to ch3, a PipeWire graph is built and tagged `"ch3"` (`smc_ch3_void`, `smc_ch3_gain_a`, etc.). This creates a class of bugs whenever a stream moves between channels:
+
+**Scenario that breaks everything:**
+1. Firefox auto-binds to ch3 → crossfader routing created, Firefox in `smc_ch3_void`.
+2. User unbinds ch3, UserBinds Firefox to ch4 → `syncChannel(ch3)` sees stream still live in ss → **returns early without teardown** (the "page navigation must not tear down routing" guard fires incorrectly). `setupChannel(ch4)` also runs → Firefox moves to `smc_ch4_void`. Now two routing graphs exist for one stream; ch3's modules are zombie-loaded.
+3. User moves Firefox back to ch3 → `syncChannel(ch3)` re-attaches the dispatcher to ch3's **zombie routing** (pointing at idle `smc_ch3_gain_a/b`). Fader works (targets Firefox directly). Knob silently controls the wrong gain sinks with no audible effect. Eventually a mute from a subsequent setup never gets unmuted → complete silence.
+
+A partial fix (`streamBoundElsewhere` in `crossfaders.go`) was shipped to detect the explicit-rebind case and force teardown, but this is a band-aid: it adds a double mute/unmute cycle (audible silence on every channel hop) and doesn't address the root model.
+
+### Proposed Fix: device-owns-routing
+
+The correct model: **a send matrix belongs to the device (stream), not to the channel strip.**
+
+Key changes:
+- `crossfaderManager.active` changes from `[8]*crossfaderState` (keyed by channel slot) to `map[string]*crossfaderState` keyed by **config device key** (e.g. `"firefox"`).
+- PipeWire module tag changes from `"ch3"` to the device key → modules named `smc_firefox_void`, `smc_firefox_gain_a`, etc.
+- `Sync` iterates active device routings + unrouted streams, not 8 channel slots. Two passes:
+  1. For each active routing: is the stream still live? If not, tear down. Is it now claimed by a different-but-same device key? Just keep it.
+  2. For each stream needing routing: does it already have one? If not, set up.
+  3. After routing is resolved: scan the dispatcher snapshot for which channel currently holds this stream and call `SetCrossfader` on that strip only.
+- Moving Firefox from ch3 to ch4 becomes: detach ch3's knob (`SetCrossfader(3, nil, "")`), attach ch4's knob (`SetCrossfader(4, ctrl, nameA, nameB)`) — **no mute, no module teardown, no silence**.
+- The `streamBoundElsewhere` helper becomes dead code and should be removed.
+- Logs change from `"crossfader ch3: headphones ↔ speakers"` to `"crossfader firefox: headphones ↔ speakers"`.
+
 ## How to Build & Test
 - **Build:** `make build` (creates `smc-mixer` and `smc-mixerd`).
 - **Install:** `make install` (places binaries in `~/.local/bin`).
