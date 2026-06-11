@@ -39,9 +39,11 @@ type CrossfaderController interface {
 }
 
 // LEDWriter sends LED feedback to the MIDI device.
+// Fader channels (0xE0–0xE7) are excluded: pitch-bend messages on those channels
+// move the motorized faders and trigger the sync LED; only SetFaderPosition may
+// write to them, and only when a deliberate position change is intended.
 type LEDWriter interface {
 	SetButtonLED(ch int, kind midi.ButtonKind, on bool)
-	SetFaderLED(ch int, blink bool)
 	SetFaderPosition(ch int, vol float64)
 	SetGlobalLED(action midi.GlobalAction, on bool)
 }

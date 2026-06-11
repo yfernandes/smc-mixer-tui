@@ -39,13 +39,11 @@ func (f *fakeMPRIS) PlayPause(_ context.Context, playerName string) error {
 }
 
 type fakeLEDs struct {
-	faderLEDs     map[int]bool
 	faderPosition map[int]float64
 }
 
 func newFakeLEDs() *fakeLEDs {
 	return &fakeLEDs{
-		faderLEDs:     make(map[int]bool),
 		faderPosition: make(map[int]float64),
 	}
 }
@@ -53,9 +51,6 @@ func newFakeLEDs() *fakeLEDs {
 func (f *fakeLEDs) SetButtonLED(ch int, kind midi.ButtonKind, on bool) {
 }
 
-func (f *fakeLEDs) SetFaderLED(ch int, blink bool) {
-	f.faderLEDs[ch] = blink
-}
 
 func (f *fakeLEDs) SetFaderPosition(ch int, vol float64) {
 	f.faderPosition[ch] = vol

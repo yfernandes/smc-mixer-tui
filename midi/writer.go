@@ -21,14 +21,15 @@ func OpenWriter(path string) (*Writer, error) {
 	return &Writer{f: f}, nil
 }
 
-// ClearLEDs turns off all button LEDs, fader LEDs, and global transport LEDs.
+// ClearLEDs turns off all button LEDs and global transport LEDs.
 // Call before closing to leave the hardware in a clean state.
+// Fader channels (0xE0–0xE7) are intentionally not touched: sending pitch-bend
+// messages as a "clear" would move the motorized faders and trigger the sync LED.
 func (w *Writer) ClearLEDs() {
 	for ch := range 8 {
 		for _, kind := range []ButtonKind{ButtonRec, ButtonSolo, ButtonMute, ButtonStop} {
 			w.SetButtonLED(ch, kind, false)
 		}
-		w.SetFaderLED(ch, false)
 	}
 	for _, action := range []GlobalAction{ActionPrevious, ActionNext, ActionPause, ActionPlay, ActionRecord} {
 		w.SetGlobalLED(action, false)
@@ -51,18 +52,6 @@ func (w *Writer) SetButtonLED(ch int, kind ButtonKind, on bool) {
 	w.write([3]byte{0x90, note, vel})
 }
 
-// SetFaderLED attempts to set the fader-top LED to blink (true) or off (false).
-// In practice the LED is driven by the physical fader position, not by this message:
-// software commands are overridden by the hardware and have no observable effect
-// while the fader is above the floor. Retained for the off-at-zero case (binding cleared).
-func (w *Writer) SetFaderLED(ch int, blink bool) {
-	msb := byte(0x00)
-	if blink {
-		msb = 0x04
-	}
-	w.write([3]byte{0xE0 + byte(ch), 0x00, msb})
-}
-
 // SetFaderPosition moves the motorized fader to vol (0.0–1.0) using full 14-bit resolution.
 func (w *Writer) SetFaderPosition(ch int, vol float64) {
 	if vol < 0 {
@@ -70,10 +59,16 @@ func (w *Writer) SetFaderPosition(ch int, vol float64) {
 	} else if vol > 1 {
 		vol = 1
 	}
-	raw := uint16(vol * 16383)
+	w.writeFader(ch, uint16(vol*16383))
+}
+
+// writeFader is the sole path that may emit pitch-bend messages (0xE0–0xE7).
+// raw is a 14-bit position value (0–16383); the MSB is always derived from it,
+// so there is no way to inject the hardware fader-lock command (MSB=0x04, LSB=0x00).
+func (w *Writer) writeFader(ch int, raw uint16) {
 	lsb := byte(raw & 0x7F)
 	msb := byte(raw >> 7)
-	w.write([3]byte{0xE0 + byte(ch), lsb, msb})
+	w.writeRaw([3]byte{0xE0 + byte(ch), lsb, msb})
 }
 
 // SetGlobalLED sets a transport button LED on or off.
@@ -107,6 +102,13 @@ func globalNote(action GlobalAction) (byte, bool) {
 }
 
 func (w *Writer) write(b [3]byte) {
+	if b[0] >= 0xE0 && b[0] <= 0xE7 {
+		panic(fmt.Sprintf("midi: use writeFader for pitch-bend channel 0x%02X", b[0]))
+	}
+	w.writeRaw(b)
+}
+
+func (w *Writer) writeRaw(b [3]byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.f.Write(b[:]) //nolint:errcheck

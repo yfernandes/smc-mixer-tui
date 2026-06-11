@@ -21,18 +21,7 @@ func (d *Dispatcher) UpdateActualVolume(ch int, vol float64) {
 		// Reset to 0 so moveSoftPickup re-evaluates on the next fader message.
 		d.channels[ch].pickupSide = 0
 	}
-	bound := d.channels[ch].StreamID != nil
-	synced := d.channels[ch].Synced
-	leds := d.leds
 	d.mu.Unlock()
-
-	if leds != nil {
-		// The SMC46 fader LED reflects physical fader position: it blinks whenever
-		// the fader is above ~3% travel, regardless of software commands. We cannot
-		// use SetFaderLED to independently signal sync state. The call here is kept
-		// for when the channel loses its binding (turns off the LED at zero).
-		leds.SetFaderLED(ch, bound && synced)
-	}
 }
 
 func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
@@ -47,14 +36,7 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 		return
 	}
 	update := d.channels[m.Channel].moveFader(faderPos)
-	leds := d.leds
 	d.mu.Unlock()
-
-	// Only signal sync state via LED when bound — for unbound channels, SetFaderLED
-	// would send a pitch-bend-at-zero command that fights the physical fader position.
-	if leds != nil && update.bound {
-		leds.SetFaderLED(m.Channel, update.synced)
-	}
 
 	if !update.synced || !update.bound {
 		return

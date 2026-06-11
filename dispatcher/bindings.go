@@ -33,10 +33,8 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 
 	if leds != nil {
 		for _, i := range evicted {
-			leds.SetFaderLED(i, false)
 			leds.SetButtonLED(i, midi.ButtonStop, false)
 		}
-		leds.SetFaderLED(ch, false) // off until fader reaches zero
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
@@ -71,10 +69,8 @@ func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKin
 
 	if leds != nil {
 		for _, i := range evicted {
-			leds.SetFaderLED(i, false)
 			leds.SetButtonLED(i, midi.ButtonStop, false)
 		}
-		leds.SetFaderLED(ch, false)
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
@@ -112,7 +108,6 @@ func (d *Dispatcher) LoseBinding(ch int) {
 		oldCancel()
 	}
 	if leds != nil {
-		leds.SetFaderLED(ch, false)
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
@@ -148,7 +143,6 @@ func (d *Dispatcher) ResetStrip(ch int) {
 	default:
 	}
 	if leds != nil {
-		leds.SetFaderLED(ch, false)
 		leds.SetButtonLED(ch, midi.ButtonMute, false)
 		leds.SetButtonLED(ch, midi.ButtonSolo, false)
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
@@ -217,7 +211,6 @@ func (d *Dispatcher) Unbind(ch int) {
 		oldCancel()
 	}
 	if leds != nil {
-		leds.SetFaderLED(ch, false)
 		leds.SetButtonLED(ch, midi.ButtonStop, false)
 		leds.SetButtonLED(ch, midi.ButtonRec, rLED)
 	}
