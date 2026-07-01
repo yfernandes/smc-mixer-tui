@@ -30,6 +30,20 @@ func main() {
 	)
 	flag.Parse()
 
+	// Singleton guard: refuse to start a second driver. Must run before any MIDI
+	// or PipeWire work — a second instance would grab the MIDI device and tear
+	// down the running daemon's crossfader modules. Exit 0 (not a failure) so a
+	// systemd Restart=on-failure policy does not restart-loop.
+	lock, err := acquireSingletonLock()
+	if err == errAlreadyRunning {
+		log.Print("smc-mixerd already running; exiting")
+		return
+	}
+	if err != nil {
+		die("singleton lock: %v", err)
+	}
+	defer lock.Close()
+
 	cfgPath := *cfgFlag
 	if cfgPath == "" {
 		cfgPath = config.DefaultPath()
@@ -273,9 +287,9 @@ func pollStreams(
 	getVol knobVolumeGetter,
 ) {
 	var (
-		lastMu  sync.Mutex
-		lastSS  []streams.EnrichedStream
-		bindMu  sync.Mutex // serialises clearPageAssignments+applyBindings vs enricher applyBindings
+		lastMu sync.Mutex
+		lastSS []streams.EnrichedStream
+		bindMu sync.Mutex // serialises clearPageAssignments+applyBindings vs enricher applyBindings
 	)
 
 	// Listen for immediate-rebind triggers from page switches.

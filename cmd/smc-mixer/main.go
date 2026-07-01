@@ -26,7 +26,7 @@ func main() {
 		die("load config: %v", err)
 	}
 
-	client, state, err := connectOrStartDaemon(cfgPath)
+	client, state, err := connectToDaemon()
 	if err != nil {
 		die("%v", err)
 	}

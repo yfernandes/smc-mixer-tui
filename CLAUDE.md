@@ -6,8 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `smc-mixer` is a Go application that turns a hardware MIDI controller (Studiologic SMC46) into a software mixer for PipeWire. It has two binaries:
 
-- **`smc-mixerd`** — background daemon: owns MIDI I/O, PipeWire control, stream discovery, and an IPC socket.
-- **`smc-mixer`** — Bubble Tea TUI client: connects to the daemon socket and renders mixer state.
+- **`smc-mixerd`** — background daemon: owns MIDI I/O, PipeWire control, stream discovery, and an IPC socket. It is a long-running **singleton driver**, run via `systemctl --user` (`smc-mixer.service`), and enforces single-instance with a `flock` (`cmd/smc-mixerd/singleton.go`).
+- **`smc-mixer`** — Bubble Tea TUI **client**: connects to the running daemon socket and renders mixer state. It never spawns a daemon.
+
+> **Before debugging any "fader/crossfader/controller stopped working" issue, read
+> [`docs/DAEMON_AND_AUDIO.md`](docs/DAEMON_AND_AUDIO.md).** It covers the process model,
+> the crossfader signal chain, the WirePlumber create→move race (and the required
+> `extras/wireplumber/51-smc-mixer.conf` drop-in), daemon-stacking, and a symptom→cause→fix
+> table. First check: `pgrep -c smc-mixerd` must print `1`.
 
 ## Commands
 
