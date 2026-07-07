@@ -14,7 +14,7 @@ import (
 // Dispatcher is the subset of dispatcher.Dispatcher used by the TUI.
 type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
-	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32)
+	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string)
 	Unbind(ch int)
 	ToggleMute(ch int)
 	ToggleSolo(ch int)
@@ -24,9 +24,9 @@ type Dispatcher interface {
 type navSetting int
 
 const (
-	navStream      navSetting = iota // cycle through bound streams
-	navMute                          // toggle mute
-	navSolo                          // toggle solo
+	navStream       navSetting = iota // cycle through bound streams
+	navMute                           // toggle mute
+	navSolo                           // toggle solo
 	navSettingCount navSetting = iota
 )
 
@@ -51,20 +51,20 @@ type Model struct {
 	disp     Dispatcher
 	reloadFn func() [8]StripConfig // called on 'r'; re-reads config and returns fresh strip configs
 
-	channels    [8]dispatcher.Channel
-	labels      [8]string
-	stripCfgs   [8]StripConfig
-	enriched    []streams.EnrichedStream
-	selected    int  // 0–7 focused channel strip
-	bindMode    bool // user is cycling streams to bind to selected channel
-	bindCursor  int  // current index into enriched
-	bindScroll  int  // first visible index in bind panel
+	channels   [8]dispatcher.Channel
+	labels     [8]string
+	stripCfgs  [8]StripConfig
+	enriched   []streams.EnrichedStream
+	selected   int  // 0–7 focused channel strip
+	bindMode   bool // user is cycling streams to bind to selected channel
+	bindCursor int  // current index into enriched
+	bindScroll int  // first visible index in bind panel
 
 	termW int // terminal width from WindowSizeMsg
 	termH int // terminal height from WindowSizeMsg
 
-	ActivePage      string     // current page name; "main" if none active
-	ChannelAdvanced [8]bool    // advanced mode per strip; resets on page switch
+	ActivePage      string  // current page name; "main" if none active
+	ChannelAdvanced [8]bool // advanced mode per strip; resets on page switch
 	deviceConnected bool
 	navSetting      navSetting // currently focused per-channel setting for MIDI nav
 	navStreamOpen   bool       // stream-list panel is visible; set on ◀/▶, cleared on context change

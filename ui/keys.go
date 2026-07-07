@@ -41,7 +41,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			avail := m.availableStreams()
 			if len(avail) > 0 && m.bindCursor < len(avail) {
 				s := avail[m.bindCursor]
-				m.disp.Bind(m.selected, s.ID, s.Name, s.Kind, s.MPRISPlayer, s.PID)
+				m.disp.Bind(m.selected, s.ID, s.Name, s.Kind, s.MPRISPlayer, s.PID, s.MediaName)
 			}
 			m.bindMode = false
 		} else {
@@ -185,7 +185,7 @@ func (m *Model) cycleStream(dir int) {
 		next = (cur + dir + len(avail)) % len(avail)
 	}
 	s := avail[next]
-	m.disp.Bind(m.selected, s.ID, s.Name, s.Kind, s.MPRISPlayer, s.PID)
+	m.disp.Bind(m.selected, s.ID, s.Name, s.Kind, s.MPRISPlayer, s.PID, s.MediaName)
 }
 
 func globalActionToPage(a midi.GlobalAction) (string, bool) {

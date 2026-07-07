@@ -45,7 +45,9 @@ func (d *Dispatcher) Bind(ch int, id uint32, name string, kind audio.NodeKind, m
 // override this slot with a config-driven stream while the stream is live.
 // pid is the OS process ID of the stream; when non-zero it is stored as BoundPID so
 // that if the stream dies a new stream from the same process is reattached automatically.
-func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32) {
+// mediaName is the PipeWire media.name (e.g. tab title); stored as BoundMediaName so
+// PID-based reconnect can prefer the same tab when multiple tabs share a PID.
+func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	d.mu.Lock()
 	var evicted []int
 	for i := range d.channels {
@@ -63,6 +65,7 @@ func (d *Dispatcher) UserBind(ch int, id uint32, name string, kind audio.NodeKin
 	})
 	d.channels[ch].UserBound = true
 	d.channels[ch].BoundPID = pid
+	d.channels[ch].BoundMediaName = mediaName
 	leds := d.leds
 	rLED := d.channels[ch].Rec || d.channels[ch].Pinned
 	d.mu.Unlock()
