@@ -26,11 +26,12 @@ type bindCall struct {
 	kind      audio.NodeKind
 	mprisName string
 	pid       uint32
+	mediaName string
 }
 
 func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
-func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32) {
-	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName, pid})
+func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
+	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName, pid, mediaName})
 }
 func (f *fakeDisp) Unbind(ch int)    { f.unbinds = append(f.unbinds, ch) }
 func (f *fakeDisp) ToggleMute(ch int) {}

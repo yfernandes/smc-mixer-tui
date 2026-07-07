@@ -67,6 +67,7 @@ func parseStreams(data []byte) ([]Stream, error) {
 			MediaName: rawStr(n.Info.Props["media.name"]),
 			PID:       streamPID(n, clientPIDs[clientID]),
 			Kind:      kind,
+			Active:    n.Info.State == "running",
 		})
 	}
 	return streams, nil

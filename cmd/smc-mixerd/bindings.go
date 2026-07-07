@@ -38,7 +38,7 @@ func applyBindings(ctx context.Context, cfg *config.Config, disp *dispatcher.Dis
 		case action.userBound:
 			// PID-based reconnect: preserve UserBound semantics across stream restarts.
 			snap := disp.Snapshot()
-			disp.UserBind(action.ch, action.id, action.name, action.kind, action.mprisName, snap[action.ch].BoundPID)
+			disp.UserBind(action.ch, action.id, action.name, action.kind, action.mprisName, snap[action.ch].BoundPID, action.mediaName)
 			dev := cfg.ChannelForPage(activePage, action.ch)
 			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
 			applySyncMode(cfg, disp, action.ch, dev)

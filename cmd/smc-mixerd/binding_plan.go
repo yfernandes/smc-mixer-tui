@@ -13,9 +13,10 @@ type bindingAction struct {
 	name      string
 	kind      audio.NodeKind
 	mprisName string
-	lose      bool      // if true: lose binding only, all other fields ignored
-	syncSpec  bool      // if true: sync advancedSpec for an unchanged live binding
-	userBound bool      // if true: apply via UserBind (PID-based reconnect)
+	mediaName string // media.name of the stream (e.g. tab title); stored in BoundMediaName for reconnect
+	lose      bool   // if true: lose binding only, all other fields ignored
+	syncSpec  bool   // if true: sync advancedSpec for an unchanged live binding
+	userBound bool   // if true: apply via UserBind (PID-based reconnect)
 }
 
 func planBindings(cfg *config.Config, activePage string, snap [8]dispatcher.Channel, ss []streams.EnrichedStream) []bindingAction {
@@ -37,9 +38,15 @@ func planChannelBinding(cfg *config.Config, activePage string, ch int, current d
 
 	// PID-based reconnect: when a user-bound stream dies, reattach to the first new
 	// stream from the same process (e.g. browser tab switching videos).
+	// Prefer the stream whose media.name matches BoundMediaName (same tab), then
+	// fall back to any stream from the same process.
 	if !live && current.BoundPID != 0 && !current.ManuallyUnbound {
+		var fallback *streams.EnrichedStream
 		for i := range ss {
-			if ss[i].PID == current.BoundPID {
+			if ss[i].PID != current.BoundPID {
+				continue
+			}
+			if current.BoundMediaName != "" && ss[i].MediaName == current.BoundMediaName {
 				s := ss[i]
 				return bindingAction{
 					ch:        ch,
@@ -47,9 +54,24 @@ func planChannelBinding(cfg *config.Config, activePage string, ch int, current d
 					name:      s.Name,
 					kind:      s.Kind,
 					mprisName: mprisName(s),
+					mediaName: s.MediaName,
 					userBound: true,
 				}, true
 			}
+			if fallback == nil {
+				fallback = &ss[i]
+			}
+		}
+		if fallback != nil {
+			return bindingAction{
+				ch:        ch,
+				id:        fallback.ID,
+				name:      fallback.Name,
+				kind:      fallback.Kind,
+				mprisName: mprisName(*fallback),
+				mediaName: fallback.MediaName,
+				userBound: true,
+			}, true
 		}
 	}
 
@@ -111,6 +133,12 @@ func channelBindingLive(ch dispatcher.Channel, ss []streams.EnrichedStream) bool
 }
 
 func bindingCandidate(matcher streamMatcher, ss []streams.EnrichedStream) *streams.EnrichedStream {
+	// Prefer a stream that is actively producing audio over an idle one.
+	for i := range ss {
+		if ss[i].Active && matcher.matches(ss[i]) {
+			return &ss[i]
+		}
+	}
 	for i := range ss {
 		if matcher.matches(ss[i]) {
 			return &ss[i]

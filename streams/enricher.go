@@ -28,6 +28,7 @@ type EnrichedStream struct {
 	BindKey     string // stable key for config matching (MPRIS name or app.name)
 	Source      Source
 	Kind        audio.NodeKind // functional role: source app, microphone, or output sink
+	Active      bool           // true when the node's PipeWire state is "running" (producing audio)
 	MPRISPlayer string         // MPRIS player name (suffix after "org.mpris.MediaPlayer2.")
 	Track       string         // MPRIS: current track title
 	Artist      string         // MPRIS: first listed artist
@@ -189,6 +190,7 @@ func enrichStreamIdentity(
 		BindKey:   s.Name,
 		Source:    SourcePipeWire,
 		Kind:      s.Kind,
+		Active:    s.Active,
 		MediaName: s.MediaName,
 	}
 	if w, ok := hyprWindowForPID(s.PID, hyprByPID); ok {
@@ -218,17 +220,23 @@ func applyHyprlandIdentity(es *EnrichedStream, w hyprWindow) {
 
 // applyMPRISIdentity enriches es with MPRIS metadata.
 // When direct is true (PID matched the MPRIS owner exactly), the MPRIS player
-// name becomes the authoritative display identity — e.g. "firefox.instance_1"
-// lets the config match "firefox.*". When direct is false (ancestry match,
-// e.g. Chromium's audio subprocess → browser process), only the control name
-// and track metadata are set; the Hyprland-derived display identity is kept so
-// existing config rules continue to match.
+// name becomes the authoritative BindKey — e.g. "firefox.instance_1" lets the
+// config match "firefox.*". When multiple streams share a PID (e.g. browser
+// tabs), each has a distinct media.name (tab title), so that is used as the
+// display Name instead of the shared MPRIS player name. When direct is false
+// (ancestry match, e.g. Chromium's audio subprocess → browser process), only
+// the control name and track metadata are set; the Hyprland-derived display
+// identity is kept so existing config rules continue to match.
 func applyMPRISIdentity(es *EnrichedStream, p mprisPlayer, direct bool) {
 	es.MPRISPlayer = p.Name
 	es.Track = p.Track
 	es.Artist = p.Artist
 	if direct {
-		es.Name = p.Name
+		if es.MediaName != "" {
+			es.Name = es.MediaName
+		} else {
+			es.Name = p.Name
+		}
 		es.BindKey = p.Name
 		es.Source = SourceMPRIS
 	}

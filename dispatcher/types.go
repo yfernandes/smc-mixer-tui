@@ -57,6 +57,7 @@ type MPRISCaller interface {
 type Channel struct {
 	StreamID        *uint32        // nil if unbound
 	BoundPID        uint32         // OS PID of the last user-bound stream; 0 if none. Survives stream death so the next stream from the same process is reattached.
+	BoundMediaName  string         // media.name of the last user-bound stream; used to prefer the same tab on PID-based reconnect.
 	ManuallyUnbound bool           // user explicitly unbound this channel; suppresses config auto-rebind
 	UserBound       bool           // user explicitly bound this channel; suppresses config rebind while stream is live
 	Name            string         // display name; "" if unbound
@@ -70,21 +71,21 @@ type Channel struct {
 	// ActualVolume is the PipeWire-reported volume — the authoritative application
 	// target and the pickup reference. They diverge whenever the fader hasn't yet
 	// established sync (Synced=false), and converge once pickup is complete.
-	FaderPos     float64 // physical hardware fader position, 0.0–1.0; see FaderPosKnown
-	FaderPosKnown bool   // true once the first MIDI CC has been received for this channel
-	ActualVolume float64 // volume last reported by PipeWire; the APP-side authority and pickup target
+	FaderPos      float64 // physical hardware fader position, 0.0–1.0; see FaderPosKnown
+	FaderPosKnown bool    // true once the first MIDI CC has been received for this channel
+	ActualVolume  float64 // volume last reported by PipeWire; the APP-side authority and pickup target
 
-	LastSetVol      float64        // last volume we sent to PipeWire; -1 = never
-	Synced          bool           // fader has established sync and now controls PipeWire
-	SyncMode        SyncMode       // how this channel establishes fader sync; set at bind time from config
-	Knob            int            // 0–127, accumulated relative position; starts at 64
-	Mute            bool           // user-set mute
-	SoloMuted       bool           // muted as a side-effect of another same-kind channel being soloed
-	Solo            bool
-	Rec             bool
-	Stop            bool
-	Advanced        bool // advanced mode is active; R LED blinks, controls remapped
-	Pinned          bool // channel is pinned to the main page; R LED solid on
+	LastSetVol float64  // last volume we sent to PipeWire; -1 = never
+	Synced     bool     // fader has established sync and now controls PipeWire
+	SyncMode   SyncMode // how this channel establishes fader sync; set at bind time from config
+	Knob       int      // 0–127, accumulated relative position; starts at 64
+	Mute       bool     // user-set mute
+	SoloMuted  bool     // muted as a side-effect of another same-kind channel being soloed
+	Solo       bool
+	Rec        bool
+	Stop       bool
+	Advanced   bool // advanced mode is active; R LED blinks, controls remapped
+	Pinned     bool // channel is pinned to the main page; R LED solid on
 
 	// pickupTol is the soft pickup tolerance (0 → use PickupThreshold).
 	// pickupSide records which side of ActualVolume the fader was on when sync was last lost:

@@ -18,6 +18,7 @@ type Stream struct {
 	MediaName string         // media.name (e.g. YouTube video title, track name)
 	PID       uint32         // application.process.id; 0 if absent
 	Kind      audio.NodeKind // functional role of the node
+	Active    bool           // true when PipeWire node state is "running" (producing audio)
 }
 
 // Client wraps wpctl and pw-dump subprocess calls.
