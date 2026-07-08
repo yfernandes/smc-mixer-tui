@@ -95,6 +95,9 @@ func main() {
 	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
 	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath, Version)
+	srv.RoutingSnapshot = func(ctx context.Context) daemon.RoutingSnapshot {
+		return buildRoutingSnapshot(ctx, pw, disp, manageCrossfaders, cfg)
+	}
 	srv.AfterCmd = func(ctx context.Context) {
 		snap := disp.Snapshot()
 		// Fast synchronous path: update dispatcher knob attachment for any routing

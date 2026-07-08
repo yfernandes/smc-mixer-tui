@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 
@@ -32,13 +33,61 @@ type crossfaderState struct {
 	streamID   uint32
 	nameA      string
 	nameB      string
-	attachedCh int              // dispatcher channel currently controlled by this routing; -1 if none
+	sinkANode  string            // node.name of output sink A; used by the routing inspector to look up live volume
+	sinkBNode  string            // node.name of output sink B
+	attachedCh int               // dispatcher channel currently controlled by this routing; -1 if none
 	knob       config.KnobConfig // effective knob config; used in Pass 1 to re-validate sinks without re-deriving from cfg
 }
 
 type channelCrossfader struct {
 	pw      *pipewire.Client
 	routing *pipewire.CrossfaderRouting
+
+	mu         sync.Mutex
+	volA, volB float64
+}
+
+// routeInfo is a read-only snapshot of one active crossfader routing, used by
+// the routing inspector to build a RoutingSnapshot without exposing internal
+// mutable state.
+type routeInfo struct {
+	deviceKey    string
+	streamID     uint32
+	nameA, nameB string
+	sinkANode    string
+	sinkBNode    string
+	nullSinkName string
+	gainAName    string
+	gainBName    string
+	attachedCh   int
+	volA, volB   float64
+}
+
+// Snapshot returns a point-in-time view of all active crossfader routings,
+// sorted by deviceKey for stable display order.
+func (m *crossfaderManager) Snapshot() []routeInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]routeInfo, 0, len(m.active))
+	for key, st := range m.active {
+		volA, volB := st.ctrl.GetGains()
+		out = append(out, routeInfo{
+			deviceKey:    key,
+			streamID:     st.streamID,
+			nameA:        st.nameA,
+			nameB:        st.nameB,
+			sinkANode:    st.sinkANode,
+			sinkBNode:    st.sinkBNode,
+			nullSinkName: st.routing.NullSinkName,
+			gainAName:    st.routing.GainAName,
+			gainBName:    st.routing.GainBName,
+			attachedCh:   st.attachedCh,
+			volA:         volA,
+			volB:         volB,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].deviceKey < out[j].deviceKey })
+	return out
 }
 
 func newCrossfaderManager(cfg *config.Config, pw *pipewire.Client, disp *dispatcher.Dispatcher) *crossfaderManager {
@@ -117,6 +166,16 @@ func (m *crossfaderManager) Sync(ctx context.Context, snap [8]dispatcher.Channel
 		m.sinksLogged[deviceKey] = false
 		m.setupDevice(ctx, deviceKey, streamID, knob, snap, ss)
 	}
+}
+
+// LastStreams returns the most recent stream list Sync was called with (nil
+// until the first Sync). Used by the routing inspector to evaluate what would
+// be bound on pages other than the currently active one, without needing its
+// own separate cache of the enricher's output.
+func (m *crossfaderManager) LastStreams() []streams.EnrichedStream {
+	m.lastSSMu.RLock()
+	defer m.lastSSMu.RUnlock()
+	return m.lastSS
 }
 
 // SyncIfAble runs a full Sync using the most recently cached stream list.
@@ -204,6 +263,8 @@ func (m *crossfaderManager) setupDevice(ctx context.Context, deviceKey string, s
 		streamID:   streamID,
 		nameA:      nameA,
 		nameB:      nameB,
+		sinkANode:  sinkANodeName,
+		sinkBNode:  sinkBNodeName,
 		attachedCh: -1,
 		knob:       knob,
 	}
@@ -213,7 +274,19 @@ func (m *crossfaderManager) setupDevice(ctx context.Context, deviceKey string, s
 }
 
 func (c *channelCrossfader) SetGains(ctx context.Context, volA, volB float64) error {
+	c.mu.Lock()
+	c.volA, c.volB = volA, volB
+	c.mu.Unlock()
 	return c.pw.SetCrossfaderGains(ctx, c.routing, volA, volB)
+}
+
+// GetGains returns the last-commanded gains, regardless of whether the
+// PipeWire call that set them succeeded — used by the routing inspector to
+// show what the daemon intended versus what PipeWire actually has.
+func (c *channelCrossfader) GetGains() (float64, float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.volA, c.volB
 }
 
 // deviceKeyAndKnob returns the stable routing key and effective KnobConfig for a stream.

@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -14,9 +15,10 @@ import (
 // — test doubles —
 
 type fakeDisp struct {
-	snap    [8]dispatcher.Channel
-	binds   []bindCall
-	unbinds []int
+	snap            [8]dispatcher.Channel
+	binds           []bindCall
+	unbinds         []int
+	routingRequests int
 }
 
 type bindCall struct {
@@ -33,9 +35,10 @@ func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
 func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName, pid, mediaName})
 }
-func (f *fakeDisp) Unbind(ch int)    { f.unbinds = append(f.unbinds, ch) }
+func (f *fakeDisp) Unbind(ch int)     { f.unbinds = append(f.unbinds, ch) }
 func (f *fakeDisp) ToggleMute(ch int) {}
 func (f *fakeDisp) ToggleSolo(ch int) {}
+func (f *fakeDisp) RequestRouting()   { f.routingRequests++ }
 
 // — helpers —
 
@@ -347,7 +350,7 @@ func TestNavSettingChangeClosesPanel(t *testing.T) {
 func TestChannelChangeClosesPanel(t *testing.T) {
 	ss := []streams.EnrichedStream{{ID: 1, Name: "A"}}
 	m := makeModel(&fakeDisp{}, ss)
-	m = upd(m, gMsg(midi.ActionRight))      // open panel
+	m = upd(m, gMsg(midi.ActionRight))       // open panel
 	m = upd(m, gMsg(midi.ActionSeekForward)) // change channel → closes panel
 	if m.navStreamOpen {
 		t.Fatal("navStreamOpen should close on channel change")
@@ -554,4 +557,55 @@ func TestReloadKeySuppressedInBindMode(t *testing.T) {
 
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
+}
+
+// — routing inspector (Tab key) —
+
+func kTab() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyTab} }
+
+func TestTabOpensRoutingAndRequestsSnapshot(t *testing.T) {
+	disp := &fakeDisp{}
+	m := makeModel(disp, nil)
+	m = upd(m, kTab())
+	if !m.routingOpen {
+		t.Fatal("Tab should open the routing inspector")
+	}
+	if disp.routingRequests != 1 {
+		t.Fatalf("routingRequests = %d, want 1", disp.routingRequests)
+	}
+}
+
+func TestTabTogglesRoutingClosed(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m = upd(m, kTab())
+	m = upd(m, kTab())
+	if m.routingOpen {
+		t.Fatal("second Tab should close the routing inspector")
+	}
+}
+
+func TestEscClosesRouting(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m = upd(m, kTab())
+	m = upd(m, kEsc())
+	if m.routingOpen {
+		t.Fatal("Esc should close the routing inspector")
+	}
+}
+
+func TestRoutingViewRendersStreamName(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m.routingOpen = true
+	m.routing = daemon.RoutingSnapshot{Routes: []daemon.RouteNode{
+		{StreamName: "Firefox", AttachedCh: -1, Branches: []daemon.RouteBranch{
+			{Label: "Direct", Steps: []daemon.RouteStep{{Label: "Fader", NodeName: "firefox", HasInternal: true, InternalVolume: 0.5, LiveKnown: true, LiveVolume: 0.5}}},
+		}},
+	}}
+	v := m.View()
+	if !contains(v, "Firefox") {
+		t.Fatalf("routing view should contain stream name, got: %s", v)
+	}
+	if !contains(v, "(unbound)") {
+		t.Fatalf("routing view should mark unattached stream as unbound, got: %s", v)
+	}
 }

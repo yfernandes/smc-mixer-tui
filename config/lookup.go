@@ -1,5 +1,7 @@
 package config
 
+import "sort"
+
 // DeviceFor looks up a device by key. Returns nil if not found.
 func (c *Config) DeviceFor(key string) *DeviceConfig {
 	if c.Devices == nil {
@@ -123,6 +125,26 @@ func (c *Config) ResolveOutput(key string) string {
 		return dev.Match
 	}
 	return key
+}
+
+// PageNames returns every configured page name, always including "main" even
+// if absent from the config file (the daemon treats it as the default page).
+func (c *Config) PageNames() []string {
+	c.pagesMu.RLock()
+	defer c.pagesMu.RUnlock()
+	names := make([]string, 0, len(c.Pages)+1)
+	seenMain := false
+	for name := range c.Pages {
+		names = append(names, name)
+		if name == "main" {
+			seenMain = true
+		}
+	}
+	if !seenMain {
+		names = append(names, "main")
+	}
+	sort.Strings(names)
+	return names
 }
 
 // DeviceKeyForPage returns the config device key for slot ch on the given page.

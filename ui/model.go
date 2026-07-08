@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -18,6 +19,7 @@ type Dispatcher interface {
 	Unbind(ch int)
 	ToggleMute(ch int)
 	ToggleSolo(ch int)
+	RequestRouting()
 }
 
 // navSetting identifies which per-channel parameter is focused for MIDI navigation.
@@ -70,6 +72,9 @@ type Model struct {
 	navStreamOpen   bool       // stream-list panel is visible; set on ◀/▶, cleared on context change
 	cfgReloads      int        // incremented each time 'r' fires; shows in status bar
 	versionMismatch bool       // true when TUI and daemon were built from different commits
+
+	routingOpen bool                   // routing inspector overlay is visible; toggled by Tab, independent of ActivePage
+	routing     daemon.RoutingSnapshot // last routing snapshot received from the daemon
 }
 
 // New creates the initial Model. snap and labels are the initial channel state
@@ -167,6 +172,16 @@ func tickCmd(d Dispatcher) tea.Cmd {
 	})
 }
 
+// routingTickMsg drives the periodic re-request of a routing snapshot while
+// the routing inspector is open.
+type routingTickMsg struct{}
+
+func routingTickCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(_ time.Time) tea.Msg {
+		return routingTickMsg{}
+	})
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
@@ -185,6 +200,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGlobal(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case daemon.RoutingMsg:
+		m.routing = daemon.RoutingSnapshot(msg)
+	case routingTickMsg:
+		if !m.routingOpen {
+			return m, nil
+		}
+		m.disp.RequestRouting()
+		return m, routingTickCmd()
 	}
 	return m, nil
 }

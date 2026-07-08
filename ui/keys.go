@@ -52,6 +52,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "esc":
+		if m.routingOpen {
+			m.routingOpen = false
+			return m, nil
+		}
 		m.bindMode = false
 		m.navStreamOpen = false
 
@@ -64,6 +68,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.bindMode && m.reloadFn != nil {
 			m.stripCfgs = m.reloadFn()
 			m.cfgReloads++
+		}
+
+	case "tab":
+		m.routingOpen = !m.routingOpen
+		if m.routingOpen {
+			m.disp.RequestRouting()
+			return m, routingTickCmd()
 		}
 	}
 	return m, nil

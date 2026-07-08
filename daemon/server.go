@@ -33,6 +33,10 @@ type Server struct {
 	// dispatcher, before BroadcastSnapshot. Use it to update any state that
 	// depends on the current channel snapshot (e.g. crossfader attachment).
 	AfterCmd func(ctx context.Context)
+
+	// RoutingSnapshot builds the routing inspector payload on demand. Nil until
+	// set by main; requests are ignored until then.
+	RoutingSnapshot func(ctx context.Context) RoutingSnapshot
 }
 
 // NewServer creates a Server backed by disp. labels are the per-channel config
@@ -162,6 +166,12 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 		env, err := decodeEnvelope(scanner.Bytes())
 		if err != nil {
 			log.Printf("daemon: client decode: %v", err)
+			continue
+		}
+		if env.Kind == kindRoutingRequest {
+			if s.RoutingSnapshot != nil {
+				sc.writeMsg(kindRouting, s.RoutingSnapshot(ctx))
+			}
 			continue
 		}
 		s.handleCmd(ctx, env)

@@ -147,6 +147,16 @@ func (c *Client) ToggleSolo(ch int) {
 	c.send(kindSolo, soloTogglePayload{Ch: ch})
 }
 
+// RequestRouting asks the daemon for a fresh routing inspector snapshot; the
+// response arrives asynchronously as a RoutingMsg via the Bubbletea program.
+// Implements ui.Dispatcher.
+func (c *Client) RequestRouting() {
+	c.send(kindRoutingRequest, struct{}{})
+}
+
+// RoutingMsg carries a routing inspector snapshot pushed by the daemon.
+type RoutingMsg RoutingSnapshot
+
 func (c *Client) send(kind msgKind, v any) {
 	frame, err := encodeFrame(kind, v)
 	if err != nil {
@@ -216,6 +226,16 @@ func (c *Client) handlePush(env envelope) {
 		}
 		if c.prog != nil {
 			c.prog.Send(msg)
+		}
+
+	case kindRouting:
+		var snap RoutingSnapshot
+		if err := json.Unmarshal(env.Data, &snap); err != nil {
+			log.Printf("client: routing: %v", err)
+			return
+		}
+		if c.prog != nil {
+			c.prog.Send(RoutingMsg(snap))
 		}
 	}
 }

@@ -33,6 +33,9 @@ const (
 	kindUnbind   msgKind = "unbind"   // client → daemon: unbind channel
 	kindMute     msgKind = "mute"     // client → daemon: toggle mute on channel
 	kindSolo     msgKind = "solo"     // client → daemon: toggle solo on channel
+
+	kindRoutingRequest msgKind = "routing_request" // client → daemon: request a routing snapshot
+	kindRouting        msgKind = "routing"         // daemon → client: routing snapshot response
 )
 
 // envelope is the newline-delimited wire format.
@@ -177,6 +180,56 @@ type bindPayload struct {
 
 type unbindPayload struct {
 	Ch int `json:"ch"`
+}
+
+// ── Routing inspector payloads ────────────────────────────────────────────────
+
+// RouteStep is one transformation stage of a route (e.g. a null sink, a gain
+// stage, an output sink). InternalVolume is what the daemon last commanded
+// (only meaningful when HasInternal is true); LiveVolume/LiveMuted are freshly
+// queried from PipeWire (only meaningful when LiveKnown is true — the node may
+// not exist, e.g. torn-down or never created).
+// HasVolume is false for steps where volume isn't a meaningful concept for
+// that node (e.g. the raw stream identity, or a null sink whose device volume
+// is never touched and always reads 100%) — the UI omits the int=/live=
+// fields entirely for those rather than showing permanently-uninteresting
+// values.
+type RouteStep struct {
+	Label          string  `json:"label"`
+	NodeName       string  `json:"node_name"`
+	HasVolume      bool    `json:"has_volume"`
+	HasInternal    bool    `json:"has_internal"`
+	InternalVolume float64 `json:"internal_volume"`
+	LiveKnown      bool    `json:"live_known"`
+	LiveVolume     float64 `json:"live_volume"`
+	LiveMuted      bool    `json:"live_muted"`
+}
+
+// RouteBranch is one path a stream's signal can take (e.g. "A"/"B" for a
+// crossfader, "Direct" for a plain binding), as an ordered list of steps.
+type RouteBranch struct {
+	Label string      `json:"label"`
+	Steps []RouteStep `json:"steps"`
+}
+
+// RouteNode is the root of one managed stream's routing tree. AttachedCh is
+// the hardware channel currently controlling it, or -1 if the stream is
+// managed but not bound to any of the 8 channels. Trunk holds the steps
+// shared by every branch (the raw stream node, its fader, and — for
+// crossfade routes — the null sink) before Branches fork. Category groups
+// nodes in the UI ("applications", "outputs", "inputs" — mirroring the page
+// order) so the tree doesn't reorder itself as streams come and go.
+type RouteNode struct {
+	StreamName string        `json:"stream_name"`
+	Category   string        `json:"category"`
+	AttachedCh int           `json:"attached_ch"`
+	Trunk      []RouteStep   `json:"trunk"`
+	Branches   []RouteBranch `json:"branches"`
+}
+
+// RoutingSnapshot is the full routing inspector payload.
+type RoutingSnapshot struct {
+	Routes []RouteNode `json:"routes"`
 }
 
 type muteTogglePayload struct {

@@ -3,6 +3,9 @@ package ui
 import "github.com/charmbracelet/lipgloss"
 
 func (m Model) View() string {
+	if m.routingOpen {
+		return m.renderRouting()
+	}
 	strips := make([]string, 8)
 	for i := range 8 {
 		strips[i] = m.renderStrip(i)
