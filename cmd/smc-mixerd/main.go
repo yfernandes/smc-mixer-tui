@@ -12,12 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yfernandes/smc-mixer-tui/backend"
+	"github.com/yfernandes/smc-mixer-tui/backend/shellexec"
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/pipewire"
+	"github.com/yfernandes/smc-mixer-tui/router"
 	"github.com/yfernandes/smc-mixer-tui/streams"
+	"github.com/yfernandes/smc-mixer-tui/surface/smc46"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=...".
@@ -55,6 +59,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		die("invalid config: %v", err)
 	}
+	if err := cfg.ValidateRouter(smc46.Descriptor().Strips); err != nil {
+		die("invalid router config: %v", err)
+	}
 
 	fixedDevice := *deviceFlag
 	if fixedDevice == "" {
@@ -89,6 +96,14 @@ func main() {
 		disp.SetPinned(ch, nowPinned)
 	})
 	applyBindings(ctx, cfg, disp, initial, pinned.snapshot(), pw.GetVolume)
+
+	execBackend := shellexec.New(cfg.Exec)
+	rt, err := router.NewFromConfig(map[string]backend.Backend{
+		execBackend.Name(): execBackend,
+	}, cfg.Router)
+	if err != nil {
+		die("router config: %v", err)
+	}
 
 	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
 	defer manageCrossfaders.Close(context.Background())
@@ -135,7 +150,7 @@ func main() {
 		}
 	})
 
-	go routeMIDI(midiCh, dispCh, srv, disp)
+	go routeMIDI(ctx, midiCh, dispCh, srv, disp, rt)
 	go disp.Run(ctx, dispCh)
 	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, midiCh)
 	go runVolumePoller(ctx, pw, disp, srv)
@@ -144,8 +159,11 @@ func main() {
 	<-ctx.Done()
 }
 
-func routeMIDI(midiCh <-chan midi.Msg, dispCh chan<- midi.Msg, srv *daemon.Server, disp *dispatcher.Dispatcher) {
+func routeMIDI(ctx context.Context, midiCh <-chan midi.Msg, dispCh chan<- midi.Msg, srv *daemon.Server, disp *dispatcher.Dispatcher, rt *router.Router) {
 	for msg := range midiCh {
+		if ev, ok := smc46.EventFromMsg(msg); ok && rt != nil {
+			rt.HandleEvent(ctx, ev)
+		}
 		switch m := msg.(type) {
 		case midi.GlobalMsg:
 			srv.BroadcastGlobal(m)

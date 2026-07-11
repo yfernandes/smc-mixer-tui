@@ -9,11 +9,13 @@ import (
 // Config is the full on-disk representation of smc-mixer settings.
 // Always use *Config; the embedded mutex makes value copies invalid.
 type Config struct {
-	MIDI     MIDIConfig              `yaml:"midi"`
-	Defaults DefaultsConfig          `yaml:"defaults"`
-	Devices  map[string]DeviceConfig `yaml:"devices"`
-	Pages    map[string]PageConfig   `yaml:"pages"`
-	pagesMu  sync.RWMutex            // protects Pages; Devices is read-only after Load
+	MIDI     MIDIConfig                  `yaml:"midi"`
+	Defaults DefaultsConfig              `yaml:"defaults"`
+	Devices  map[string]DeviceConfig     `yaml:"devices"`
+	Pages    map[string]PageConfig       `yaml:"pages"`
+	Exec     map[string]ExecTargetConfig `yaml:"exec,omitempty"`
+	Router   RouterConfig                `yaml:"router,omitempty"`
+	pagesMu  sync.RWMutex                // protects Pages; Devices is read-only after Load
 }
 
 // MIDIConfig holds hardware settings.
@@ -35,11 +37,11 @@ const (
 
 // DefaultsConfig sets the default knob behaviour per device type.
 type DefaultsConfig struct {
-	InputKnob           KnobConfig `yaml:"input-knob"`
-	PlaybackKnob        KnobConfig `yaml:"playback-knob"`
-	OutputKnob          KnobConfig `yaml:"output-knob"`
-	SyncMode            SyncMode   `yaml:"sync_mode,omitempty"`          // global default; "zero" if absent
-	PickupToleranceCC   int        `yaml:"pickup_tolerance,omitempty"`   // soft pickup window in CC units (1-127); default 2
+	InputKnob         KnobConfig `yaml:"input-knob"`
+	PlaybackKnob      KnobConfig `yaml:"playback-knob"`
+	OutputKnob        KnobConfig `yaml:"output-knob"`
+	SyncMode          SyncMode   `yaml:"sync_mode,omitempty"`        // global default; "zero" if absent
+	PickupToleranceCC int        `yaml:"pickup_tolerance,omitempty"` // soft pickup window in CC units (1-127); default 2
 }
 
 // KnobConfig describes how a hardware knob is used.
@@ -119,4 +121,24 @@ type PageConfig struct {
 	Faders   map[int]*string `yaml:"faders,omitempty"`
 	Knobs    map[int]*string `yaml:"knobs,omitempty"`
 	Channels map[int]*string `yaml:"channels,omitempty"`
+}
+
+// ExecTargetConfig defines a shell-command target for the generic router.
+type ExecTargetConfig struct {
+	Label       string    `yaml:"label,omitempty"`
+	Command     string    `yaml:"command"`
+	Scale       []float64 `yaml:"scale,omitempty"`
+	ReadCommand string    `yaml:"read-command,omitempty"`
+}
+
+// RouterConfig is the additive generic router config introduced beside the
+// legacy page/device schema.
+type RouterConfig struct {
+	Assignments map[int]AssignmentConfig `yaml:"assignments,omitempty"`
+}
+
+type AssignmentConfig struct {
+	Label  string            `yaml:"label,omitempty"`
+	Target string            `yaml:"target"`
+	Params map[string]string `yaml:"params"`
 }

@@ -78,6 +78,23 @@ devices:
     type: output
     match: ~
 
+exec:
+  # Additive generic-router target. This does not affect existing audio pages
+  # unless a router assignment below uses the same physical strip.
+  brightness:
+    label: "Monitor brightness"
+    command: "ddcutil setvcp 10 {{value}}"
+    scale: [0, 100]
+
+router:
+  # Phase 1 flat overlay: a router-assigned strip still also reaches the legacy
+  # dispatcher, so do not bind the same strip to audio on the active page.
+  assignments:
+    3:
+      target: "exec:brightness"
+      params:
+        fader: "value"
+
 pages:
   main:
     button: none

@@ -353,6 +353,57 @@ func TestValidateAcceptsWellFormedConfig(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsRouterExecAssignment(t *testing.T) {
+	cfg := &Config{
+		Exec: map[string]ExecTargetConfig{
+			"brightness": {Command: "ddcutil setvcp 10 {{value}}", Scale: []float64{0, 100}},
+		},
+		Router: RouterConfig{
+			Assignments: map[int]AssignmentConfig{
+				3: {Target: "exec:brightness", Params: map[string]string{"fader": "value"}},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if err := cfg.ValidateRouter(8); err != nil {
+		t.Fatalf("ValidateRouter: %v", err)
+	}
+}
+
+func TestValidateRejectsRouterUnknownExecTarget(t *testing.T) {
+	cfg := &Config{
+		Exec: map[string]ExecTargetConfig{
+			"brightness": {Command: "ddcutil setvcp 10 {{value}}"},
+		},
+		Router: RouterConfig{
+			Assignments: map[int]AssignmentConfig{
+				3: {Target: "exec:ghost", Params: map[string]string{"fader": "value"}},
+			},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unknown exec target should fail validation")
+	}
+}
+
+func TestValidateRouterRejectsOutOfRangeStrip(t *testing.T) {
+	cfg := &Config{
+		Exec: map[string]ExecTargetConfig{
+			"brightness": {Command: "ddcutil setvcp 10 {{value}}"},
+		},
+		Router: RouterConfig{
+			Assignments: map[int]AssignmentConfig{
+				8: {Target: "exec:brightness", Params: map[string]string{"fader": "value"}},
+			},
+		},
+	}
+	if err := cfg.ValidateRouter(8); err == nil {
+		t.Fatal("out-of-range strip should fail validation")
+	}
+}
+
 func TestValidateRejectsUnknownDeviceType(t *testing.T) {
 	cfg := &Config{
 		Devices: map[string]DeviceConfig{

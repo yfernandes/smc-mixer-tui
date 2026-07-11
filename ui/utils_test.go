@@ -24,7 +24,7 @@ func TestCapitalize(t *testing.T) {
 func TestWrapTwo(t *testing.T) {
 	cases := []struct {
 		s, l1, l2 string
-		width      int
+		width     int
 	}{
 		// Fits on one line — second line empty.
 		{"short", "short", "", 12},

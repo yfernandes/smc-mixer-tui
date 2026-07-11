@@ -32,7 +32,7 @@ type Msg interface{ midiMsg() }
 
 // ButtonMsg is emitted for channel strip buttons (rec/solo/mute/stop).
 type ButtonMsg struct {
-	Channel int        // 0–7
+	Channel int // 0–7
 	Kind    ButtonKind
 	Pressed bool
 }
@@ -57,9 +57,9 @@ type KnobMsg struct {
 }
 
 func (ButtonMsg) midiMsg() {}
-func (GlobalMsg) midiMsg()  {}
-func (FaderMsg) midiMsg()   {}
-func (KnobMsg) midiMsg()    {}
+func (GlobalMsg) midiMsg() {}
+func (FaderMsg) midiMsg()  {}
+func (KnobMsg) midiMsg()   {}
 
 // DeviceStatusMsg is sent to the UI when the MIDI device connects or disconnects.
 // It is not routed through the MIDI pipeline — main sends it directly via program.Send.

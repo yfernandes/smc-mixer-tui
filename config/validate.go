@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Validate checks the config for semantic errors.
@@ -20,7 +21,13 @@ func (c *Config) Validate() error {
 	if err := c.validateDefaultKnobs(); err != nil {
 		return err
 	}
-	return c.validatePageSlots()
+	if err := c.validatePageSlots(); err != nil {
+		return err
+	}
+	if err := c.validateExecTargets(); err != nil {
+		return err
+	}
+	return c.ValidateRouter(8)
 }
 
 func validateDeviceConfig(d DeviceConfig, key string) error {
@@ -104,6 +111,52 @@ func (c *Config) validateSlotMap(pageName, slotName string, slots map[int]*strin
 		if _, ok := c.Devices[*key]; !ok {
 			return fmt.Errorf("page %s %s %d: unknown device %q", pageName, slotName, pos, *key)
 		}
+	}
+	return nil
+}
+
+func (c *Config) validateExecTargets() error {
+	for key, target := range c.Exec {
+		if target.Command == "" {
+			return fmt.Errorf("exec %s: command is required", key)
+		}
+		if len(target.Scale) != 0 && len(target.Scale) != 2 {
+			return fmt.Errorf("exec %s: scale must contain exactly two numbers", key)
+		}
+	}
+	return nil
+}
+
+// ValidateRouter validates router assignments against the provided surface strip count.
+func (c *Config) ValidateRouter(strips int) error {
+	for strip, assignment := range c.Router.Assignments {
+		if strip < 0 || strip >= strips {
+			return fmt.Errorf("router assignment %d: strip outside surface range 0..%d", strip, strips-1)
+		}
+		if assignment.Target == "" {
+			return fmt.Errorf("router assignment %d: target is required", strip)
+		}
+		if assignment.Params == nil || len(assignment.Params) == 0 {
+			return fmt.Errorf("router assignment %d: params are required", strip)
+		}
+		if err := c.validateRouterTarget(strip, assignment.Target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateRouterTarget(strip int, target string) error {
+	const prefix = "exec:"
+	if !strings.HasPrefix(target, prefix) || len(target) == len(prefix) {
+		return fmt.Errorf("router assignment %d: unsupported target %q", strip, target)
+	}
+	key := strings.TrimPrefix(target, prefix)
+	if c.Exec == nil {
+		return fmt.Errorf("router assignment %d: unknown exec target %q", strip, key)
+	}
+	if _, ok := c.Exec[key]; !ok {
+		return fmt.Errorf("router assignment %d: unknown exec target %q", strip, key)
 	}
 	return nil
 }

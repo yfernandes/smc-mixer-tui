@@ -51,7 +51,6 @@ func newFakeLEDs() *fakeLEDs {
 func (f *fakeLEDs) SetButtonLED(ch int, kind midi.ButtonKind, on bool) {
 }
 
-
 func (f *fakeLEDs) SetFaderPosition(ch int, vol float64) {
 	f.faderPosition[ch] = vol
 }
