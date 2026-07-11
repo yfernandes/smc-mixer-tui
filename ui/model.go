@@ -15,10 +15,13 @@ import (
 // Dispatcher is the subset of dispatcher.Dispatcher used by the TUI.
 type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
+	Strips() []daemon.StripWire
 	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string)
 	Unbind(ch int)
 	ToggleMute(ch int)
 	ToggleSolo(ch int)
+	SetParam(target, param string, value float64, boolValue bool)
+	ToggleParam(target, param string)
 	RequestRouting()
 	RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string)
 }
@@ -55,6 +58,7 @@ type Model struct {
 	reloadFn func() [8]StripConfig // called on 'r'; re-reads config and returns fresh strip configs
 
 	channels   [8]dispatcher.Channel
+	strips     map[int]daemon.StripWire
 	labels     [8]string
 	stripCfgs  [8]StripConfig
 	enriched   []streams.EnrichedStream
@@ -124,11 +128,16 @@ func (m Model) retargetTargets() []retargetTarget {
 // stripCfgs describes which strips render as split zones on the main page.
 // reloadFn is called when the user presses 'r'; it re-reads the config file and returns
 // a fresh set of strip configs. May be nil (reload key becomes a no-op).
-func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream, stripCfgs [8]StripConfig, reloadFn func() [8]StripConfig, versionMismatch bool) Model {
+func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial []streams.EnrichedStream, stripCfgs [8]StripConfig, reloadFn func() [8]StripConfig, versionMismatch bool, initialStrips ...[]daemon.StripWire) Model {
+	strips := map[int]daemon.StripWire{}
+	if len(initialStrips) > 0 {
+		strips = stripsByIndex(initialStrips[0])
+	}
 	return Model{
 		disp:            disp,
 		reloadFn:        reloadFn,
 		channels:        snap,
+		strips:          strips,
 		labels:          labels,
 		stripCfgs:       stripCfgs,
 		enriched:        sortedByKind(initial),
@@ -232,6 +241,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ChannelAdvanced[ch] = m.channels[ch].Advanced
 		}
 		return m, tickCmd(m.disp)
+	case daemon.StripsMsg:
+		m.strips = stripsByIndex([]daemon.StripWire(msg))
 	case streams.UpdateMsg:
 		m.enriched = sortedByKind([]streams.EnrichedStream(msg))
 	case tea.WindowSizeMsg:
@@ -252,4 +263,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, routingTickCmd()
 	}
 	return m, nil
+}
+
+func stripsByIndex(strips []daemon.StripWire) map[int]daemon.StripWire {
+	out := make(map[int]daemon.StripWire, len(strips))
+	for _, s := range strips {
+		if s.Strip >= 0 {
+			out[s.Strip] = s
+		}
+	}
+	return out
 }

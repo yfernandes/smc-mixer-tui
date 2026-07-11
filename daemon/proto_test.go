@@ -120,6 +120,15 @@ func TestReadInitialStateDecodesInitialFrame(t *testing.T) {
 	labels := [8]string{"Music", "Chat"}
 	payload := initialPayload{
 		Snapshot: snapToWire(snapshot),
+		Strips: []StripWire{{
+			Strip:    3,
+			Label:    "Brightness",
+			Backend:  "exec",
+			TargetID: "exec:brightness",
+			Params: map[string]ParamWire{
+				"value": {Kind: 0, Value: 0.5, Readable: true, Synced: false},
+			},
+		}},
 		Streams: []streams.EnrichedStream{{
 			ID:      7,
 			PID:     99,
@@ -146,11 +155,48 @@ func TestReadInitialStateDecodesInitialFrame(t *testing.T) {
 	if !reflect.DeepEqual(got.Streams, payload.Streams) {
 		t.Fatalf("Streams = %#v, want %#v", got.Streams, payload.Streams)
 	}
+	if !reflect.DeepEqual(got.Strips, payload.Strips) {
+		t.Fatalf("Strips = %#v, want %#v", got.Strips, payload.Strips)
+	}
 	if got.Labels != labels {
 		t.Fatalf("Labels = %#v, want %#v", got.Labels, labels)
 	}
 	if got.ConfigPath != payload.ConfigPath {
 		t.Fatalf("ConfigPath = %q, want %q", got.ConfigPath, payload.ConfigPath)
+	}
+}
+
+func TestGenericCommandFrameRoundTrip(t *testing.T) {
+	setFrame, err := encodeFrame(kindSet, setPayload{Target: "exec:brightness", Param: "value", Value: 0.75})
+	if err != nil {
+		t.Fatalf("encode set: %v", err)
+	}
+	env, err := decodeEnvelope(bytes.TrimSpace(setFrame))
+	if err != nil {
+		t.Fatalf("decode set: %v", err)
+	}
+	cmd, ok, err := decodeCommand(env)
+	if err != nil || !ok {
+		t.Fatalf("decodeCommand set ok=%v err=%v", ok, err)
+	}
+	if cmd.kind != kindSet || cmd.set.Target != "exec:brightness" || cmd.set.Param != "value" || cmd.set.Value != 0.75 {
+		t.Fatalf("set command = %+v", cmd)
+	}
+
+	toggleFrame, err := encodeFrame(kindToggle, togglePayload{Target: "exec:lamp", Param: "mute"})
+	if err != nil {
+		t.Fatalf("encode toggle: %v", err)
+	}
+	env, err = decodeEnvelope(bytes.TrimSpace(toggleFrame))
+	if err != nil {
+		t.Fatalf("decode toggle: %v", err)
+	}
+	cmd, ok, err = decodeCommand(env)
+	if err != nil || !ok {
+		t.Fatalf("decodeCommand toggle ok=%v err=%v", ok, err)
+	}
+	if cmd.kind != kindToggle || cmd.set.Target != "exec:lamp" || cmd.set.Param != "mute" {
+		t.Fatalf("toggle command = %+v", cmd)
 	}
 }
 

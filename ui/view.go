@@ -11,7 +11,11 @@ func (m Model) View() string {
 	}
 	strips := make([]string, 8)
 	for i := range 8 {
-		strips[i] = m.renderStrip(i)
+		if s, ok := m.strips[i]; ok {
+			strips[i] = m.renderGenericStrip(i, s)
+		} else {
+			strips[i] = m.renderStrip(i)
+		}
 	}
 	row := lipgloss.JoinHorizontal(lipgloss.Top, strips...)
 	if m.bindMode {

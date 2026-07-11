@@ -2,7 +2,10 @@ package ui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yfernandes/smc-mixer-tui/backend"
+	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/midi"
+	"github.com/yfernandes/smc-mixer-tui/surface"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -41,6 +44,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "enter":
+		if _, ok := m.strips[m.selected]; ok && !m.bindMode {
+			return m, nil
+		}
 		if m.bindMode {
 			avail := m.availableStreams()
 			if len(avail) > 0 && m.bindCursor < len(avail) {
@@ -205,6 +211,9 @@ func (m Model) handleGlobal(msg midi.GlobalMsg) (Model, tea.Cmd) {
 
 // applyNavLeft executes a "left" action on the currently focused navSetting.
 func (m *Model) applyNavLeft() {
+	if m.toggleGenericNav() {
+		return
+	}
 	switch m.navSetting {
 	case navStream:
 		m.navStreamOpen = true
@@ -218,6 +227,9 @@ func (m *Model) applyNavLeft() {
 
 // applyNavRight executes a "right" action on the currently focused navSetting.
 func (m *Model) applyNavRight() {
+	if m.toggleGenericNav() {
+		return
+	}
 	switch m.navSetting {
 	case navStream:
 		m.navStreamOpen = true
@@ -227,6 +239,40 @@ func (m *Model) applyNavRight() {
 	case navSolo:
 		m.disp.ToggleSolo(m.selected)
 	}
+}
+
+func (m *Model) toggleGenericNav() bool {
+	s, ok := m.strips[m.selected]
+	if !ok {
+		return false
+	}
+	var role string
+	switch m.navSetting {
+	case navMute:
+		role = string(surface.RoleMute)
+	case navSolo:
+		role = string(surface.RoleSolo)
+	default:
+		return false
+	}
+	param, ok := genericToggleParamFor(s, role)
+	if !ok {
+		return true
+	}
+	m.disp.ToggleParam(s.TargetID, param)
+	return true
+}
+
+func genericToggleParamFor(s daemon.StripWire, preferred string) (string, bool) {
+	if p, ok := s.Params[preferred]; ok && p.Kind == uint8(backend.ParamToggle) {
+		return preferred, true
+	}
+	for param, p := range s.Params {
+		if p.Kind == uint8(backend.ParamToggle) {
+			return param, true
+		}
+	}
+	return "", false
 }
 
 // cycleStream binds the next (dir=+1) or previous (dir=-1) available stream to the

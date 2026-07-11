@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/yfernandes/smc-mixer-tui/backend"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/streams"
@@ -29,6 +30,9 @@ type Server struct {
 	streamsMu      sync.RWMutex
 	currentStreams []streams.EnrichedStream
 
+	stripsMu      sync.RWMutex
+	currentStrips []StripWire
+
 	// AfterCmd is called after each bind/unbind command is applied to the
 	// dispatcher, before BroadcastSnapshot. Use it to update any state that
 	// depends on the current channel snapshot (e.g. crossfader attachment).
@@ -41,6 +45,10 @@ type Server struct {
 	// RetargetOutput repoints a crossfade branch's output sink. Nil until set
 	// by main; requests are ignored until then.
 	RetargetOutput func(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error
+
+	// RouterSet and RouterToggle handle generic strip commands.
+	RouterSet    func(ctx context.Context, target, param string, value backend.Value) error
+	RouterToggle func(ctx context.Context, target, param string) error
 }
 
 // NewServer creates a Server backed by disp. labels are the per-channel config
@@ -98,6 +106,14 @@ func (s *Server) BroadcastSnapshot(snap [8]dispatcher.Channel) {
 	s.broadcast(kindSnapshot, snapToWire(snap))
 }
 
+// BroadcastStrips pushes generic router strip state to all connected clients.
+func (s *Server) BroadcastStrips(strips []StripWire) {
+	s.stripsMu.Lock()
+	s.currentStrips = cloneStrips(strips)
+	s.stripsMu.Unlock()
+	s.broadcast(kindStrips, strips)
+}
+
 // BroadcastStreams pushes an updated stream list and caches it for new clients.
 func (s *Server) BroadcastStreams(ss []streams.EnrichedStream) {
 	s.streamsMu.Lock()
@@ -149,9 +165,13 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 	s.streamsMu.RLock()
 	currentStreams := s.currentStreams
 	s.streamsMu.RUnlock()
+	s.stripsMu.RLock()
+	currentStrips := cloneStrips(s.currentStrips)
+	s.stripsMu.RUnlock()
 
 	init := initialPayload{
 		Snapshot:      snapToWire(s.disp.Snapshot()),
+		Strips:        currentStrips,
 		Streams:       currentStreams,
 		Labels:        s.labels,
 		ConfigPath:    s.configPath,
@@ -214,6 +234,7 @@ func (s *Server) handleCmd(ctx context.Context, env envelope) {
 type clientCommand struct {
 	kind msgKind
 	bind bindPayload
+	set  setPayload
 	ch   int
 }
 
@@ -246,6 +267,20 @@ func decodeCommand(env envelope) (clientCommand, bool, error) {
 			return clientCommand{}, false, err
 		}
 		return clientCommand{kind: env.Kind, ch: p.Ch}, true, nil
+
+	case kindSet:
+		var p setPayload
+		if err := json.Unmarshal(env.Data, &p); err != nil {
+			return clientCommand{}, false, err
+		}
+		return clientCommand{kind: env.Kind, set: p}, true, nil
+
+	case kindToggle:
+		var p togglePayload
+		if err := json.Unmarshal(env.Data, &p); err != nil {
+			return clientCommand{}, false, err
+		}
+		return clientCommand{kind: env.Kind, set: setPayload{Target: p.Target, Param: p.Param}}, true, nil
 	}
 	return clientCommand{}, false, nil
 }
@@ -261,7 +296,37 @@ func (cmd clientCommand) apply(ctx context.Context, s *Server) {
 		s.disp.ToggleMute(cmd.ch)
 	case kindSolo:
 		s.disp.ToggleSolo(cmd.ch)
+	case kindSet:
+		if s.RouterSet != nil {
+			if err := s.RouterSet(ctx, cmd.set.Target, cmd.set.Param, backend.Value{F: cmd.set.Value, B: cmd.set.Bool}); err != nil {
+				log.Printf("daemon: router set %s/%s: %v", cmd.set.Target, cmd.set.Param, err)
+			}
+		}
+	case kindToggle:
+		if s.RouterToggle != nil {
+			if err := s.RouterToggle(ctx, cmd.set.Target, cmd.set.Param); err != nil {
+				log.Printf("daemon: router toggle %s/%s: %v", cmd.set.Target, cmd.set.Param, err)
+			}
+		}
 	}
+}
+
+func cloneStrips(in []StripWire) []StripWire {
+	if in == nil {
+		return nil
+	}
+	out := make([]StripWire, len(in))
+	for i, s := range in {
+		out[i] = s
+		if s.Params != nil {
+			out[i].Params = make(map[string]ParamWire, len(s.Params))
+			for k, v := range s.Params {
+				out[i].Params[k] = v
+			}
+		}
+		out[i].Ext = append([]byte(nil), s.Ext...)
+	}
+	return out
 }
 
 // ── serverConn ────────────────────────────────────────────────────────────────

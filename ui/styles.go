@@ -23,6 +23,7 @@ var (
 	colorMic    = lipgloss.Color("#FF4444") // red   — microphone / capture
 	colorSrc    = lipgloss.Color("#44FF88") // green — audio source / app playing
 	colorSink   = lipgloss.Color("#4488FF") // blue  — output device / sink
+	colorRouter = lipgloss.Color("#44D7D7") // cyan  — generic router strip
 
 	stripUnbound = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -49,6 +50,8 @@ var (
 	stripSrcSelected  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSrc).Padding(0, 1)
 	stripSinkBound    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSink).Foreground(colorDim).Padding(0, 1)
 	stripSinkSelected = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSink).Padding(0, 1)
+	stripRouter       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorRouter).Foreground(colorDim).Padding(0, 1)
+	stripRouterSelect = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorRouter).Padding(0, 1)
 
 	btnInactive = lipgloss.NewStyle().Foreground(colorDim)
 	btnMuteOn   = lipgloss.NewStyle().Background(colorWarn).Foreground(colorFG).Bold(true)
@@ -89,6 +92,7 @@ var (
 	subtypePlaybackStyle = lipgloss.NewStyle().Foreground(colorSrc)
 	subtypeOutputStyle   = lipgloss.NewStyle().Foreground(colorSink)
 	subtypeDimStyle      = lipgloss.NewStyle().Foreground(colorDim)
+	subtypeRouterStyle   = lipgloss.NewStyle().Foreground(colorRouter)
 
 	// splitDividerStyle draws the horizontal rule between knob and fader zones.
 	// Width is set at call-site via .Width(n) to match the strip's inner content width.

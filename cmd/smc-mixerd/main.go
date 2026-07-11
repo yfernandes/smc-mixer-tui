@@ -110,6 +110,13 @@ func main() {
 	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
 
 	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath, Version)
+	srv.RouterSet = rt.SetParam
+	srv.RouterToggle = rt.ToggleParam
+	rt.SetChangeCallback(func(strips []router.StripState) {
+		srv.BroadcastStrips(routerStripsToWire(strips))
+	})
+	rt.Activate(ctx)
+	srv.BroadcastStrips(routerStripsToWire(rt.Snapshot()))
 	srv.RoutingSnapshot = func(ctx context.Context) daemon.RoutingSnapshot {
 		return buildRoutingSnapshot(ctx, pw, disp, manageCrossfaders, cfg)
 	}
@@ -151,8 +158,9 @@ func main() {
 	})
 
 	go routeMIDI(ctx, midiCh, dispCh, srv, disp, rt)
+	go rt.Run(ctx)
 	go disp.Run(ctx, dispCh)
-	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, midiCh)
+	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, rt, midiCh)
 	go runVolumePoller(ctx, pw, disp, srv)
 	go pollStreams(ctx, enricher, cfg, disp, srv, pinned, manageCrossfaders.Sync, rebindCh, pw.GetVolume)
 
@@ -178,7 +186,32 @@ func routeMIDI(ctx context.Context, midiCh <-chan midi.Msg, dispCh chan<- midi.M
 	close(dispCh)
 }
 
-func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Server, disp *dispatcher.Dispatcher, midiCh chan<- midi.Msg) {
+func routerStripsToWire(strips []router.StripState) []daemon.StripWire {
+	out := make([]daemon.StripWire, 0, len(strips))
+	for _, s := range strips {
+		params := make(map[string]daemon.ParamWire, len(s.Params))
+		for id, p := range s.Params {
+			params[id] = daemon.ParamWire{
+				Kind:     uint8(p.Kind),
+				Value:    p.Value.F,
+				Bool:     p.Value.B,
+				Readable: p.Readable,
+				Synced:   p.Synced,
+			}
+		}
+		out = append(out, daemon.StripWire{
+			Strip:    s.Strip,
+			Label:    s.Label,
+			Backend:  s.Backend,
+			TargetID: s.TargetID,
+			Params:   params,
+			Ext:      s.Ext,
+		})
+	}
+	return out
+}
+
+func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Server, disp *dispatcher.Dispatcher, rt *router.Router, midiCh chan<- midi.Msg) {
 	defer close(midiCh)
 	for {
 		dev, cleanup, ok := waitForMIDIDevice(ctx, fixedDevice, srv)
@@ -194,6 +227,7 @@ func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Serv
 			log.Printf("MIDI LED writer: %v", werr)
 		} else {
 			disp.SetLEDWriter(w)
+			rt.SetFeedbackWriter(smc46.Feedback{Writer: w})
 			disp.SyncLEDs()
 		}
 
@@ -204,6 +238,7 @@ func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Serv
 
 		if w != nil {
 			disp.SetLEDWriter(nil)
+			rt.SetFeedbackWriter(nil)
 			w.ClearLEDs()
 			w.Close()
 		}

@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/backend"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
@@ -18,6 +19,7 @@ type fakeDisp struct {
 	snap            [8]dispatcher.Channel
 	binds           []bindCall
 	unbinds         []int
+	toggles         []toggleCall
 	routingRequests int
 	retargets       []retargetCall
 }
@@ -36,14 +38,24 @@ type retargetCall struct {
 	deviceKey, branch, sinkNodeName, sinkDisplayName string
 }
 
+type toggleCall struct {
+	target, param string
+}
+
 func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
+func (f *fakeDisp) Strips() []daemon.StripWire      { return nil }
 func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName, pid, mediaName})
 }
 func (f *fakeDisp) Unbind(ch int)     { f.unbinds = append(f.unbinds, ch) }
 func (f *fakeDisp) ToggleMute(ch int) {}
 func (f *fakeDisp) ToggleSolo(ch int) {}
-func (f *fakeDisp) RequestRouting()   { f.routingRequests++ }
+func (f *fakeDisp) SetParam(target, param string, value float64, boolValue bool) {
+}
+func (f *fakeDisp) ToggleParam(target, param string) {
+	f.toggles = append(f.toggles, toggleCall{target, param})
+}
+func (f *fakeDisp) RequestRouting() { f.routingRequests++ }
 func (f *fakeDisp) RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string) {
 	f.retargets = append(f.retargets, retargetCall{deviceKey, branch, sinkNodeName, sinkDisplayName})
 }
@@ -513,6 +525,29 @@ func TestUpdateMsgRefreshesEnriched(t *testing.T) {
 	m = upd(m, streams.UpdateMsg(newStreams))
 	if len(m.enriched) != 1 || m.enriched[0].Name != "vlc" {
 		t.Errorf("UpdateMsg should refresh enriched list: %v", m.enriched)
+	}
+}
+
+func TestGenericStripOverridesLegacyAndToggles(t *testing.T) {
+	disp := &fakeDisp{}
+	m := New(disp, [8]dispatcher.Channel{}, [8]string{}, nil, [8]StripConfig{}, nil, false, []daemon.StripWire{{
+		Strip:    0,
+		Label:    "Brightness",
+		Backend:  "exec",
+		TargetID: "exec:brightness",
+		Params: map[string]daemon.ParamWire{
+			"value": {Kind: uint8(backend.ParamContinuous), Value: 0.5, Readable: true, Synced: false},
+			"mute":  {Kind: uint8(backend.ParamToggle), Bool: true, Readable: true, Synced: true},
+		},
+	}})
+	v := m.View()
+	if !contains(v, "Brightness") || !contains(v, "pickup") {
+		t.Fatalf("generic strip did not render expected state:\n%s", v)
+	}
+	m.navSetting = navMute
+	m.applyNavRight()
+	if len(disp.toggles) != 1 || disp.toggles[0].target != "exec:brightness" || disp.toggles[0].param != "mute" {
+		t.Fatalf("generic toggle = %+v", disp.toggles)
 	}
 }
 

@@ -29,11 +29,13 @@ type Client struct {
 	writeMu sync.Mutex
 	mu      sync.RWMutex
 	snap    [8]dispatcher.Channel
+	strips  []StripWire
 }
 
 // InitialState holds the full state sent by the daemon on connection.
 type InitialState struct {
 	Snapshot      [8]dispatcher.Channel
+	Strips        []StripWire
 	Streams       []streams.EnrichedStream
 	Labels        [8]string
 	ConfigPath    string // absolute path to the config file the daemon loaded
@@ -63,6 +65,7 @@ func Connect() (*Client, InitialState, error) {
 		conn:    conn,
 		scanner: scanner,
 		snap:    state.Snapshot,
+		strips:  cloneStrips(state.Strips),
 	}
 	return c, state, nil
 }
@@ -89,6 +92,7 @@ func readInitialState(scanner *bufio.Scanner) (InitialState, error) {
 	}
 	return InitialState{
 		Snapshot:      snapFromWire(p.Snapshot),
+		Strips:        cloneStrips(p.Strips),
 		Streams:       p.Streams,
 		Labels:        p.Labels,
 		ConfigPath:    p.ConfigPath,
@@ -127,6 +131,13 @@ func (c *Client) Snapshot() [8]dispatcher.Channel {
 	return c.snap
 }
 
+// Strips returns the latest generic router strips received from the daemon.
+func (c *Client) Strips() []StripWire {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneStrips(c.strips)
+}
+
 // Bind forwards a bind command to the daemon. Implements ui.Dispatcher.
 func (c *Client) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	c.send(kindBind, bindPayload{Ch: ch, ID: id, Name: name, Kind: kind, MPRISName: mprisName, PID: pid, MediaName: mediaName})
@@ -147,6 +158,14 @@ func (c *Client) ToggleSolo(ch int) {
 	c.send(kindSolo, soloTogglePayload{Ch: ch})
 }
 
+func (c *Client) SetParam(target, param string, value float64, boolValue bool) {
+	c.send(kindSet, setPayload{Target: target, Param: param, Value: value, Bool: boolValue})
+}
+
+func (c *Client) ToggleParam(target, param string) {
+	c.send(kindToggle, togglePayload{Target: target, Param: param})
+}
+
 // RequestRouting asks the daemon for a fresh routing inspector snapshot; the
 // response arrives asynchronously as a RoutingMsg via the Bubbletea program.
 // Implements ui.Dispatcher.
@@ -156,6 +175,9 @@ func (c *Client) RequestRouting() {
 
 // RoutingMsg carries a routing inspector snapshot pushed by the daemon.
 type RoutingMsg RoutingSnapshot
+
+// StripsMsg carries generic router strip state pushed by the daemon.
+type StripsMsg []StripWire
 
 // RetargetOutput asks the daemon to repoint a crossfade branch's output sink
 // at a different live sink. deviceKey and branch come from a RouteNode/
@@ -213,6 +235,19 @@ func (c *Client) handlePush(env envelope) {
 		}
 		if c.prog != nil {
 			c.prog.Send(streams.UpdateMsg(ss))
+		}
+
+	case kindStrips:
+		var strips []StripWire
+		if err := json.Unmarshal(env.Data, &strips); err != nil {
+			log.Printf("client: strips: %v", err)
+			return
+		}
+		c.mu.Lock()
+		c.strips = cloneStrips(strips)
+		c.mu.Unlock()
+		if c.prog != nil {
+			c.prog.Send(StripsMsg(cloneStrips(strips)))
 		}
 
 	case kindDevice:

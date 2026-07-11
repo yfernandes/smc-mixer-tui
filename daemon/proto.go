@@ -26,6 +26,7 @@ type msgKind string
 const (
 	kindInitial  msgKind = "initial"  // daemon → client: full state on connect
 	kindSnapshot msgKind = "snapshot" // daemon → client: channel state update
+	kindStrips   msgKind = "strips"   // daemon → client: generic router strip update
 	kindStreams  msgKind = "streams"  // daemon → client: enriched stream list update
 	kindDevice   msgKind = "device"   // daemon → client: MIDI device status
 	kindGlobal   msgKind = "global"   // daemon → client: transport button press
@@ -33,6 +34,8 @@ const (
 	kindUnbind   msgKind = "unbind"   // client → daemon: unbind channel
 	kindMute     msgKind = "mute"     // client → daemon: toggle mute on channel
 	kindSolo     msgKind = "solo"     // client → daemon: toggle solo on channel
+	kindSet      msgKind = "set"      // client → daemon: set generic param
+	kindToggle   msgKind = "toggle"   // client → daemon: toggle generic param
 
 	kindRoutingRequest msgKind = "routing_request" // client → daemon: request a routing snapshot
 	kindRouting        msgKind = "routing"         // daemon → client: routing snapshot response
@@ -158,9 +161,27 @@ func snapFromWire(w snapshotWire) [8]dispatcher.Channel {
 	return s
 }
 
+type StripWire struct {
+	Strip    int                  `json:"strip"`
+	Label    string               `json:"label"`
+	Backend  string               `json:"backend"`
+	TargetID string               `json:"target_id"`
+	Params   map[string]ParamWire `json:"params"`
+	Ext      json.RawMessage      `json:"ext,omitempty"`
+}
+
+type ParamWire struct {
+	Kind     uint8   `json:"kind"`
+	Value    float64 `json:"value"`
+	Bool     bool    `json:"bool"`
+	Readable bool    `json:"readable"`
+	Synced   bool    `json:"synced"`
+}
+
 // initialPayload is sent once on connect so the TUI can render immediately.
 type initialPayload struct {
 	Snapshot      snapshotWire             `json:"snapshot"`
+	Strips        []StripWire              `json:"strips,omitempty"`
 	Streams       []streams.EnrichedStream `json:"streams"`
 	Labels        [8]string                `json:"labels"`
 	ConfigPath    string                   `json:"config_path,omitempty"`
@@ -181,6 +202,18 @@ type bindPayload struct {
 
 type unbindPayload struct {
 	Ch int `json:"ch"`
+}
+
+type setPayload struct {
+	Target string  `json:"target"`
+	Param  string  `json:"param"`
+	Value  float64 `json:"value"`
+	Bool   bool    `json:"bool"`
+}
+
+type togglePayload struct {
+	Target string `json:"target"`
+	Param  string `json:"param"`
 }
 
 // ── Routing inspector payloads ────────────────────────────────────────────────

@@ -55,7 +55,7 @@ func main() {
 	versionMismatch := state.DaemonVersion != "" && Version != "" && state.DaemonVersion != Version
 
 	program := tea.NewProgram(
-		ui.New(client, state.Snapshot, state.Labels, state.Streams, lastGood, reloadFn, versionMismatch),
+		ui.New(client, state.Snapshot, state.Labels, state.Streams, lastGood, reloadFn, versionMismatch, state.Strips),
 		tea.WithAltScreen(),
 	)
 	client.SetProgram(program)

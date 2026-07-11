@@ -59,3 +59,23 @@ func TestSetCoalescesLatestValue(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	t.Fatalf("coalesced output = %q, want latest value 40", string(data))
 }
+
+func TestGetRunsReadCommandAndParsesFirstFloat(t *testing.T) {
+	b := New(map[string]config.ExecTargetConfig{
+		"brightness": {
+			Command:     "true",
+			ReadCommand: "printf 'brightness: 42 percent\\n'",
+			Scale:       []float64{0, 100},
+		},
+	})
+	got, known, err := b.Get(context.Background(), backend.TargetID("exec:brightness"), "value")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !known {
+		t.Fatal("Get known = false, want true")
+	}
+	if got.F != 0.42 {
+		t.Fatalf("Get value = %v, want 0.42", got.F)
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -95,8 +97,25 @@ func (b *Backend) Set(ctx context.Context, id backend.TargetID, param string, v 
 	return nil
 }
 
-func (b *Backend) Get(context.Context, backend.TargetID, string) (backend.Value, bool, error) {
-	return backend.Value{}, false, nil
+func (b *Backend) Get(ctx context.Context, id backend.TargetID, param string) (backend.Value, bool, error) {
+	if param == "" {
+		param = "value"
+	}
+	if param != "value" {
+		return backend.Value{}, false, fmt.Errorf("exec: unknown param %q", param)
+	}
+	t, ok := b.lookup(id)
+	if !ok {
+		return backend.Value{}, false, fmt.Errorf("exec: unknown target %q", id)
+	}
+	if t.cfg.ReadCommand == "" {
+		return backend.Value{}, false, nil
+	}
+	v, err := runReadCommand(ctx, t.cfg)
+	if err != nil {
+		return backend.Value{}, false, err
+	}
+	return backend.Value{F: unscaleValue(v, t.cfg.Scale)}, true, nil
 }
 
 func (b *Backend) runWorker(ctx context.Context, t target, w *worker) {
@@ -141,6 +160,25 @@ func runCommand(ctx context.Context, cfg config.ExecTargetConfig, v float64) err
 	return nil
 }
 
+var firstFloatRE = regexp.MustCompile(`[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?`)
+
+func runReadCommand(ctx context.Context, cfg config.ExecTargetConfig) (float64, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.ReadCommand)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+	}
+	match := firstFloatRE.FindString(string(out))
+	if match == "" {
+		return 0, fmt.Errorf("read-command produced no float")
+	}
+	v, err := strconv.ParseFloat(match, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 func scaleValue(v float64, scale []float64) float64 {
 	if len(scale) != 2 {
 		return v
@@ -148,9 +186,29 @@ func scaleValue(v float64, scale []float64) float64 {
 	return scale[0] + v*(scale[1]-scale[0])
 }
 
+func unscaleValue(v float64, scale []float64) float64 {
+	if len(scale) != 2 {
+		return clamp01(v)
+	}
+	if scale[0] == scale[1] {
+		return 0
+	}
+	return clamp01((v - scale[0]) / (scale[1] - scale[0]))
+}
+
 func formatValue(v float64) string {
 	if math.Abs(v-math.Round(v)) < 0.0000001 {
 		return fmt.Sprintf("%.0f", math.Round(v))
 	}
 	return fmt.Sprintf("%.6g", v)
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
