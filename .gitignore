@@ -19,3 +19,5 @@ out/
 
 # IDE
 .idea/
+
+tasks/

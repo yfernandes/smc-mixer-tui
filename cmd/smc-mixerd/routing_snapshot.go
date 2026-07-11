@@ -118,6 +118,7 @@ func buildRoutingSnapshot(ctx context.Context, pw *pipewire.Client, disp *dispat
 			StreamName: displayName,
 			Category:   categoryFor(kind),
 			AttachedCh: r.attachedCh,
+			DeviceKey:  r.deviceKey,
 			// Null Sink has no volume of its own: nothing ever sets it, and its
 			// device volume always reads 100% — showing int=/live= for it is
 			// permanent noise, so it's excluded from HasVolume entirely.

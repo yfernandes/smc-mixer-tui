@@ -20,6 +20,7 @@ type Dispatcher interface {
 	ToggleMute(ch int)
 	ToggleSolo(ch int)
 	RequestRouting()
+	RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string)
 }
 
 // navSetting identifies which per-channel parameter is focused for MIDI navigation.
@@ -73,8 +74,49 @@ type Model struct {
 	cfgReloads      int        // incremented each time 'r' fires; shows in status bar
 	versionMismatch bool       // true when TUI and daemon were built from different commits
 
-	routingOpen bool                   // routing inspector overlay is visible; toggled by Tab, independent of ActivePage
-	routing     daemon.RoutingSnapshot // last routing snapshot received from the daemon
+	routingOpen         bool                   // routing inspector overlay is visible; toggled by Tab, independent of ActivePage
+	routing             daemon.RoutingSnapshot // last routing snapshot received from the daemon
+	routingCursor       int                    // index into retargetTargets(); which branch's output is selected
+	routingPickerOpen   bool                   // destination-sink picker is open, overlaid on the routing view
+	routingPickerCursor int                    // index into the picker's candidate sink list
+}
+
+// retargetTarget identifies one retargetable branch: a crossfade route's "A"
+// or "B" branch, addressable by the node's DeviceKey and the branch label.
+type retargetTarget struct {
+	NodeIdx, BranchIdx int
+}
+
+// pickerCandidates returns the live output sinks the retarget picker can
+// choose from. m.enriched already excludes smc_*/loopback-* internals (the
+// enricher blacklists those prefixes), so this is just a kind filter.
+func (m Model) pickerCandidates() []streams.EnrichedStream {
+	out := make([]streams.EnrichedStream, 0, len(m.enriched))
+	for _, s := range m.enriched {
+		if s.Kind == audio.KindSink {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// retargetTargets walks the routing tree collecting every branch that can be
+// retargeted in phase 1: the A/B branches of crossfade routes (identified by
+// a non-empty DeviceKey). Direct branches and non-crossfade nodes aren't
+// editable yet.
+func (m Model) retargetTargets() []retargetTarget {
+	var out []retargetTarget
+	for ni, node := range m.routing.Routes {
+		if node.DeviceKey == "" {
+			continue
+		}
+		for bi, branch := range node.Branches {
+			if branch.Label == "A" || branch.Label == "B" {
+				out = append(out, retargetTarget{NodeIdx: ni, BranchIdx: bi})
+			}
+		}
+	}
+	return out
 }
 
 // New creates the initial Model. snap and labels are the initial channel state

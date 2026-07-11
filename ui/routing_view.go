@@ -16,6 +16,7 @@ var (
 	routingOKStyle     = lipgloss.NewStyle().Foreground(colorGreen)
 	routingWarnStyle   = lipgloss.NewStyle().Foreground(colorWarn).Bold(true)
 	routingHeaderStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	routingCursorStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 )
 
 // categoryLabel returns the display heading for a route category, matching
@@ -48,11 +49,22 @@ const maxNodeNameLen = 28
 // fork into, each with its own sequence of steps.
 func (m Model) renderRouting() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s%s\n\n", routingTitleStyle.Render("Routing Inspector"), routingDimStyle.Render("  (Tab/Esc to close)"))
+	help := "  (Tab/Esc to close)"
+	if len(m.retargetTargets()) > 0 {
+		help = "  (↑↓ select branch, Enter to retarget its output, Tab/Esc to close)"
+	}
+	fmt.Fprintf(&b, "%s%s\n\n", routingTitleStyle.Render("Routing Inspector"), routingDimStyle.Render(help))
 
 	if len(m.routing.Routes) == 0 {
 		b.WriteString(routingDimStyle.Render("No managed streams."))
 		return b.String()
+	}
+
+	targets := m.retargetTargets()
+	selNode, selBranch := -1, -1
+	if n := len(targets); n > 0 {
+		t := targets[m.routingCursor%n]
+		selNode, selBranch = t.NodeIdx, t.BranchIdx
 	}
 
 	lastCategory := ""
@@ -85,7 +97,12 @@ func (m Model) renderRouting() string {
 			if j == len(node.Branches)-1 {
 				branchTee = "└─"
 			}
-			fmt.Fprintf(&b, "  %s %s\n", branchTee, branch.Label)
+			marker, label := "  ", branch.Label
+			if i == selNode && j == selBranch {
+				marker = routingCursorStyle.Render("▸") + " "
+				label = routingCursorStyle.Render(label)
+			}
+			fmt.Fprintf(&b, "%s%s %s\n", marker, branchTee, label)
 
 			branchBar := "│"
 			if j == len(node.Branches)-1 {
@@ -110,6 +127,40 @@ func (m Model) renderRouting() string {
 		out = lipgloss.NewStyle().Width(m.termW).Render(out)
 	}
 	return out
+}
+
+// renderRetargetPicker renders the destination-sink picker overlaid below
+// the tree when routingPickerOpen is true, listing live output sinks
+// (m.pickerCandidates()) with a cursor — same visual language as the bind
+// panel (bindBarStyle header, bindCursorStyle/bindItemStyle rows).
+func (m Model) renderRetargetPicker() string {
+	targets := m.retargetTargets()
+	label := ""
+	if n := len(targets); n > 0 {
+		t := targets[m.routingCursor%n]
+		node := m.routing.Routes[t.NodeIdx]
+		branch := node.Branches[t.BranchIdx]
+		label = fmt.Sprintf("%s / %s", node.StreamName, branch.Label)
+	}
+	header := bindBarStyle.Render(fmt.Sprintf(" Retarget %s   ↑↓ navigate   enter confirm   esc cancel", label))
+
+	candidates := m.pickerCandidates()
+	if len(candidates) == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left, header, bindDimStyle.Render(" (no output sinks available)"))
+	}
+
+	cursor := m.routingPickerCursor % len(candidates)
+	rows := make([]string, 0, len(candidates))
+	for i, s := range candidates {
+		prefix := " "
+		style := bindItemStyle
+		if i == cursor {
+			prefix = "▶"
+			style = bindCursorStyle
+		}
+		rows = append(rows, style.Render(prefix+" "+s.Name))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, rows...)...)
 }
 
 func renderStep(s daemon.RouteStep) string {

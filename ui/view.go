@@ -4,6 +4,9 @@ import "github.com/charmbracelet/lipgloss"
 
 func (m Model) View() string {
 	if m.routingOpen {
+		if m.routingPickerOpen {
+			return lipgloss.JoinVertical(lipgloss.Left, m.renderRouting(), m.renderRetargetPicker())
+		}
 		return m.renderRouting()
 	}
 	strips := make([]string, 8)

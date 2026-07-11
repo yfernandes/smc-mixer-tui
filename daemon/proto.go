@@ -36,6 +36,7 @@ const (
 
 	kindRoutingRequest msgKind = "routing_request" // client → daemon: request a routing snapshot
 	kindRouting        msgKind = "routing"         // daemon → client: routing snapshot response
+	kindRetarget       msgKind = "retarget"        // client → daemon: repoint a crossfade branch's output sink
 )
 
 // envelope is the newline-delimited wire format.
@@ -219,10 +220,14 @@ type RouteBranch struct {
 // crossfade routes — the null sink) before Branches fork. Category groups
 // nodes in the UI ("applications", "outputs", "inputs" — mirroring the page
 // order) so the tree doesn't reorder itself as streams come and go.
+// DeviceKey identifies the crossfaderManager entry this node came from
+// (empty for non-crossfade nodes) — the client echoes it back on a retarget
+// command to address the right route.
 type RouteNode struct {
 	StreamName string        `json:"stream_name"`
 	Category   string        `json:"category"`
 	AttachedCh int           `json:"attached_ch"`
+	DeviceKey  string        `json:"device_key,omitempty"`
 	Trunk      []RouteStep   `json:"trunk"`
 	Branches   []RouteBranch `json:"branches"`
 }
@@ -230,6 +235,15 @@ type RouteNode struct {
 // RoutingSnapshot is the full routing inspector payload.
 type RoutingSnapshot struct {
 	Routes []RouteNode `json:"routes"`
+}
+
+// retargetPayload repoints one crossfade branch's output sink. Branch is "A"
+// or "B"; SinkNodeName/SinkDisplayName describe the new destination.
+type retargetPayload struct {
+	DeviceKey       string `json:"device_key"`
+	Branch          string `json:"branch"`
+	SinkNodeName    string `json:"sink_node_name"`
+	SinkDisplayName string `json:"sink_display_name"`
 }
 
 type muteTogglePayload struct {

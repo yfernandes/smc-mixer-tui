@@ -98,6 +98,9 @@ func main() {
 	srv.RoutingSnapshot = func(ctx context.Context) daemon.RoutingSnapshot {
 		return buildRoutingSnapshot(ctx, pw, disp, manageCrossfaders, cfg)
 	}
+	srv.RetargetOutput = func(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error {
+		return manageCrossfaders.RetargetOutput(ctx, deviceKey, branch, sinkNodeName, sinkDisplayName)
+	}
 	srv.AfterCmd = func(ctx context.Context) {
 		snap := disp.Snapshot()
 		// Fast synchronous path: update dispatcher knob attachment for any routing

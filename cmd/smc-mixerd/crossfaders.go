@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/config"
@@ -271,6 +273,55 @@ func (m *crossfaderManager) setupDevice(ctx context.Context, deviceKey string, s
 	m.active[deviceKey] = state
 	m.attachCurrentChannel(deviceKey, state, snap)
 	log.Printf("crossfader %s: %s ↔ %s", deviceKey, nameA, nameB)
+}
+
+// RetargetOutput repoints the given branch's final loopback hop (gain sink's
+// monitor -> output sink) at a different live output sink, without touching
+// the null sink or gain stage. Runtime-only: does not persist to config, so
+// it reverts to whatever config.yaml says on the next daemon restart.
+func (m *crossfaderManager) RetargetOutput(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	state, ok := m.active[deviceKey]
+	if !ok {
+		return fmt.Errorf("crossfader %s: no active routing", deviceKey)
+	}
+
+	var gainMonitor string
+	var oldModule *uint32
+	var sinkNode, sinkName *string
+	switch branch {
+	case "A":
+		gainMonitor = state.routing.GainAName + ".monitor"
+		oldModule = &state.routing.Loop2AModule
+		sinkNode, sinkName = &state.sinkANode, &state.nameA
+	case "B":
+		gainMonitor = state.routing.GainBName + ".monitor"
+		oldModule = &state.routing.Loop2BModule
+		sinkNode, sinkName = &state.sinkBNode, &state.nameB
+	default:
+		return fmt.Errorf("crossfader %s: unknown branch %q", deviceKey, branch)
+	}
+
+	if state.streamID != 0 {
+		_ = m.pw.SetMute(ctx, state.streamID, true)
+		time.Sleep(40 * time.Millisecond)
+	}
+	newModule, err := m.pw.RetargetCrossfaderOutput(ctx, *oldModule, gainMonitor, sinkNodeName)
+	if state.streamID != 0 {
+		time.Sleep(150 * time.Millisecond)
+		_ = m.pw.SetMute(ctx, state.streamID, false)
+	}
+	if err != nil {
+		return fmt.Errorf("crossfader %s branch %s: %w", deviceKey, branch, err)
+	}
+
+	*oldModule = newModule
+	*sinkNode = sinkNodeName
+	*sinkName = sinkDisplayName
+	log.Printf("crossfader %s: branch %s retargeted -> %s", deviceKey, branch, sinkDisplayName)
+	return nil
 }
 
 func (c *channelCrossfader) SetGains(ctx context.Context, volA, volB float64) error {

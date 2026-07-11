@@ -87,3 +87,17 @@ Config file: `$XDG_CONFIG_HOME/smc-mixer/config.yaml` (default). See `config-exa
 - Packages are organized around behavior; prefer small domain types over loose strings.
 - Commit subjects use conventional prefixes: `feat:`, `fix:`, `refactor:`, `chore:`.
 - Tests live beside source as `*_test.go`; use Go's `testing` package only.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked with docket (`./task` CLI) under `tasks/`, not GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Docket's `status` field already uses the five canonical role strings natively — no mapping needed. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root (neither exists yet; created lazily). See `docs/agents/domain.md`.

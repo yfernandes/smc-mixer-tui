@@ -6,6 +6,10 @@ import (
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.routingOpen {
+		return m.handleRoutingKeys(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -52,10 +56,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "esc":
-		if m.routingOpen {
-			m.routingOpen = false
-			return m, nil
-		}
 		m.bindMode = false
 		m.navStreamOpen = false
 
@@ -71,13 +71,73 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "tab":
-		m.routingOpen = !m.routingOpen
-		if m.routingOpen {
-			m.disp.RequestRouting()
-			return m, routingTickCmd()
+		m.routingOpen = true
+		m.disp.RequestRouting()
+		return m, routingTickCmd()
+	}
+	return m, nil
+}
+
+// handleRoutingKeys handles all input while the routing inspector is open,
+// isolated from normal page/bind-mode handling. Up/Down move the branch
+// cursor (or, with the destination picker open, the picker's cursor); Enter
+// opens the picker on the selected branch, or confirms a pick; Tab/Esc close
+// the picker first, then the routing view.
+func (m Model) handleRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "tab", "esc":
+		if m.routingPickerOpen {
+			m.routingPickerOpen = false
+			return m, nil
+		}
+		m.routingOpen = false
+
+	case "up":
+		if m.routingPickerOpen {
+			if n := len(m.pickerCandidates()); n > 0 {
+				m.routingPickerCursor = (m.routingPickerCursor + n - 1) % n
+			}
+		} else if n := len(m.retargetTargets()); n > 0 {
+			m.routingCursor = (m.routingCursor + n - 1) % n
+		}
+
+	case "down":
+		if m.routingPickerOpen {
+			if n := len(m.pickerCandidates()); n > 0 {
+				m.routingPickerCursor = (m.routingPickerCursor + 1) % n
+			}
+		} else if n := len(m.retargetTargets()); n > 0 {
+			m.routingCursor = (m.routingCursor + 1) % n
+		}
+
+	case "enter":
+		if m.routingPickerOpen {
+			m.confirmRetarget()
+			m.routingPickerOpen = false
+		} else if len(m.retargetTargets()) > 0 {
+			m.routingPickerOpen = true
+			m.routingPickerCursor = 0
 		}
 	}
 	return m, nil
+}
+
+// confirmRetarget sends the currently selected picker candidate as the new
+// destination for the currently selected branch. No-op if either list is
+// empty (defensive; shouldn't happen since Enter only opens the picker when
+// retargetTargets() is non-empty, and closes it before candidates can change
+// out from under the cursor).
+func (m Model) confirmRetarget() {
+	targets := m.retargetTargets()
+	candidates := m.pickerCandidates()
+	if m.routingCursor >= len(targets) || m.routingPickerCursor >= len(candidates) {
+		return
+	}
+	t := targets[m.routingCursor]
+	node := m.routing.Routes[t.NodeIdx]
+	branch := node.Branches[t.BranchIdx]
+	sink := candidates[m.routingPickerCursor]
+	m.disp.RetargetOutput(node.DeviceKey, branch.Label, sink.NodeName, sink.Name)
 }
 
 // PageChangedMsg is emitted when the active page changes via a transport button.

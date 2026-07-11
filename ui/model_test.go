@@ -19,6 +19,7 @@ type fakeDisp struct {
 	binds           []bindCall
 	unbinds         []int
 	routingRequests int
+	retargets       []retargetCall
 }
 
 type bindCall struct {
@@ -31,6 +32,10 @@ type bindCall struct {
 	mediaName string
 }
 
+type retargetCall struct {
+	deviceKey, branch, sinkNodeName, sinkDisplayName string
+}
+
 func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
 func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName, pid, mediaName})
@@ -39,6 +44,9 @@ func (f *fakeDisp) Unbind(ch int)     { f.unbinds = append(f.unbinds, ch) }
 func (f *fakeDisp) ToggleMute(ch int) {}
 func (f *fakeDisp) ToggleSolo(ch int) {}
 func (f *fakeDisp) RequestRouting()   { f.routingRequests++ }
+func (f *fakeDisp) RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string) {
+	f.retargets = append(f.retargets, retargetCall{deviceKey, branch, sinkNodeName, sinkDisplayName})
+}
 
 // — helpers —
 
@@ -607,5 +615,98 @@ func TestRoutingViewRendersStreamName(t *testing.T) {
 	}
 	if !contains(v, "(unbound)") {
 		t.Fatalf("routing view should mark unattached stream as unbound, got: %s", v)
+	}
+}
+
+// — routing inspector: output retargeting —
+
+func crossfadeRoutingSnapshot() daemon.RoutingSnapshot {
+	branch := func(label string) daemon.RouteBranch {
+		return daemon.RouteBranch{Label: label, Steps: []daemon.RouteStep{
+			{Label: "Gain " + label, HasVolume: true, HasInternal: true, InternalVolume: 0.5, LiveKnown: true, LiveVolume: 0.5},
+			{Label: "Output", NodeName: "sink-" + label, HasVolume: true, LiveKnown: true, LiveVolume: 1},
+		}}
+	}
+	return daemon.RoutingSnapshot{Routes: []daemon.RouteNode{
+		{StreamName: "Zen", Category: "applications", AttachedCh: -1, DeviceKey: "zen",
+			Trunk:    []daemon.RouteStep{{Label: "Stream", NodeName: "Zen"}},
+			Branches: []daemon.RouteBranch{branch("A"), branch("B")}},
+	}}
+}
+
+func sinkStreams() []streams.EnrichedStream {
+	return []streams.EnrichedStream{
+		{ID: 1, Name: "Speakers", NodeName: "alsa_output.speakers", Kind: audio.KindSink},
+		{ID: 2, Name: "Headphones", NodeName: "alsa_output.headphones", Kind: audio.KindSink},
+		{ID: 3, Name: "Third Speaker", NodeName: "alsa_output.third", Kind: audio.KindSink},
+	}
+}
+
+func TestRetargetTargetsFindsCrossfadeBranches(t *testing.T) {
+	m := makeModel(&fakeDisp{}, nil)
+	m.routing = crossfadeRoutingSnapshot()
+	targets := m.retargetTargets()
+	if len(targets) != 2 {
+		t.Fatalf("want 2 retarget targets (A and B), got %d", len(targets))
+	}
+}
+
+func TestRoutingCursorMovesThroughBranches(t *testing.T) {
+	m := makeModel(&fakeDisp{}, sinkStreams())
+	m.routingOpen = true
+	m.routing = crossfadeRoutingSnapshot()
+	m = upd(m, kDown())
+	if m.routingCursor != 1 {
+		t.Fatalf("routingCursor = %d, want 1 after Down", m.routingCursor)
+	}
+	m = upd(m, kDown()) // wraps
+	if m.routingCursor != 0 {
+		t.Fatalf("routingCursor should wrap to 0, got %d", m.routingCursor)
+	}
+}
+
+func TestEnterOpensRetargetPickerAndConfirmSendsCommand(t *testing.T) {
+	disp := &fakeDisp{}
+	m := makeModel(disp, sinkStreams())
+	m.routingOpen = true
+	m.routing = crossfadeRoutingSnapshot()
+
+	m = upd(m, kDown())  // select branch B
+	m = upd(m, kEnter()) // open picker
+	if !m.routingPickerOpen {
+		t.Fatal("Enter should open the retarget picker")
+	}
+
+	m = upd(m, kDown()) // Speakers -> Headphones
+	m = upd(m, kDown()) // Headphones -> Third Speaker
+	m = upd(m, kEnter())
+	if m.routingPickerOpen {
+		t.Fatal("Enter should close the picker after confirming")
+	}
+	if len(disp.retargets) != 1 {
+		t.Fatalf("expected 1 RetargetOutput call, got %d", len(disp.retargets))
+	}
+	got := disp.retargets[0]
+	want := retargetCall{deviceKey: "zen", branch: "B", sinkNodeName: "alsa_output.third", sinkDisplayName: "Third Speaker"}
+	if got != want {
+		t.Fatalf("RetargetOutput call = %+v, want %+v", got, want)
+	}
+}
+
+func TestEscClosesPickerBeforeRoutingView(t *testing.T) {
+	m := makeModel(&fakeDisp{}, sinkStreams())
+	m.routingOpen = true
+	m.routing = crossfadeRoutingSnapshot()
+	m = upd(m, kEnter()) // open picker
+	m = upd(m, kEsc())
+	if m.routingPickerOpen {
+		t.Fatal("first Esc should close the picker")
+	}
+	if !m.routingOpen {
+		t.Fatal("routing view should still be open after closing just the picker")
+	}
+	m = upd(m, kEsc())
+	if m.routingOpen {
+		t.Fatal("second Esc should close the routing view")
 	}
 }

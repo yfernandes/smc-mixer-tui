@@ -157,6 +157,13 @@ func (c *Client) RequestRouting() {
 // RoutingMsg carries a routing inspector snapshot pushed by the daemon.
 type RoutingMsg RoutingSnapshot
 
+// RetargetOutput asks the daemon to repoint a crossfade branch's output sink
+// at a different live sink. deviceKey and branch come from a RouteNode/
+// RouteBranch in the last-received RoutingSnapshot. Implements ui.Dispatcher.
+func (c *Client) RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string) {
+	c.send(kindRetarget, retargetPayload{DeviceKey: deviceKey, Branch: branch, SinkNodeName: sinkNodeName, SinkDisplayName: sinkDisplayName})
+}
+
 func (c *Client) send(kind msgKind, v any) {
 	frame, err := encodeFrame(kind, v)
 	if err != nil {

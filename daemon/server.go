@@ -37,6 +37,10 @@ type Server struct {
 	// RoutingSnapshot builds the routing inspector payload on demand. Nil until
 	// set by main; requests are ignored until then.
 	RoutingSnapshot func(ctx context.Context) RoutingSnapshot
+
+	// RetargetOutput repoints a crossfade branch's output sink. Nil until set
+	// by main; requests are ignored until then.
+	RetargetOutput func(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error
 }
 
 // NewServer creates a Server backed by disp. labels are the per-channel config
@@ -171,6 +175,19 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 		if env.Kind == kindRoutingRequest {
 			if s.RoutingSnapshot != nil {
 				sc.writeMsg(kindRouting, s.RoutingSnapshot(ctx))
+			}
+			continue
+		}
+		if env.Kind == kindRetarget {
+			var p retargetPayload
+			if err := json.Unmarshal(env.Data, &p); err != nil {
+				log.Printf("daemon: retarget decode: %v", err)
+				continue
+			}
+			if s.RetargetOutput != nil {
+				if err := s.RetargetOutput(ctx, p.DeviceKey, p.Branch, p.SinkNodeName, p.SinkDisplayName); err != nil {
+					log.Printf("daemon: retarget %s/%s -> %s: %v", p.DeviceKey, p.Branch, p.SinkNodeName, err)
+				}
 			}
 			continue
 		}

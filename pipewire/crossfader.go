@@ -107,6 +107,22 @@ func (c *Client) setupCrossfaderInner(ctx context.Context, tag string, streamNod
 	return plan.routing(streamSI), nil
 }
 
+// RetargetCrossfaderOutput repoints a crossfade branch's final hop (a
+// module-loopback from a gain sink's monitor to an output sink) at a
+// different output sink. The new loopback is loaded before the old one is
+// unloaded, so the branch is never fully silent mid-swap. oldModuleID may be
+// 0 (nothing to unload). Returns the new module's ID for the caller to record.
+func (c *Client) RetargetCrossfaderOutput(ctx context.Context, oldModuleID uint32, sourceMonitor, newSinkName string) (uint32, error) {
+	newID, err := c.LoadModule(ctx, "module-loopback", loopbackArgs(sourceMonitor, newSinkName))
+	if err != nil {
+		return 0, fmt.Errorf("retarget loopback %s -> %s: %w", sourceMonitor, newSinkName, err)
+	}
+	if oldModuleID != 0 {
+		_ = c.UnloadModule(ctx, oldModuleID)
+	}
+	return newID, nil
+}
+
 // SetCrossfaderGains adjusts the per-output crossfader gain by setting each
 // gain-stage sink's device volume. volA and volB are 0.0–1.0.
 // The output sink device volumes (ch2/ch3 faders) are not touched.
