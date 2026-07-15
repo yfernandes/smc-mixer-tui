@@ -11,14 +11,6 @@ import (
 
 func (d *Dispatcher) onKnob(ctx context.Context, m midi.KnobMsg) {
 	d.mu.Lock()
-	adv := d.channels[m.Channel].Advanced
-	advSpec := d.channels[m.Channel].advancedSpec
-	if adv && advSpec != nil {
-		delta := m.Delta
-		d.mu.Unlock()
-		log.Printf("advanced knob ch%d: effect=%q delta=%+d", m.Channel, advSpec.KnobEffect, delta)
-		return
-	}
 	k := clampKnob(d.channels[m.Channel].Knob + m.Delta)
 	d.channels[m.Channel].Knob = k
 	ctrl := d.channels[m.Channel].crossfader

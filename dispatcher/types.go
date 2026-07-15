@@ -108,9 +108,6 @@ type Channel struct {
 	CrossSinkAName string // display name for SinkA
 	CrossSinkBName string // display name for SinkB
 
-	// advancedSpec is set by the daemon when the bound device has an [advanced]
-	// block; nil means this channel does not support advanced mode.
-	advancedSpec *AdvancedSpec
 }
 
 // globalLEDActions lists the transport actions that have LEDs, in index order.

@@ -50,21 +50,7 @@ type DeviceConfig struct {
 	MatchRegex string          `yaml:"match-regex,omitempty"` // regex applied to stream Name/BindKey
 	MatchTitle string          `yaml:"match-title,omitempty"` // case-insensitive substring on window title
 	Knob       *KnobConfig     `yaml:"knob,omitempty"`        // per-device override; nil = use default for type
-	Advanced   *AdvancedConfig `yaml:"advanced,omitempty"`    // reserved; not yet implemented
-}
-
-type AdvancedConfig struct {
-	Fader      *ControlConfig `yaml:"fader,omitempty"`
-	Knob       *ControlConfig `yaml:"knob,omitempty"`
-	MuteButton *ControlConfig `yaml:"mute-button,omitempty"`
-	SoloButton *ControlConfig `yaml:"solo-button,omitempty"`
-	StopButton *ControlConfig `yaml:"stop-button,omitempty"`
-}
-
-type ControlConfig struct {
-	Type   string `yaml:"type,omitempty"`
-	Effect string `yaml:"effect,omitempty"`
-	Action string `yaml:"action,omitempty"`
+	SyncMode   SyncMode        `yaml:"sync_mode,omitempty"`
 }
 
 type BindType string

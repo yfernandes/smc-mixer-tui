@@ -30,12 +30,14 @@ type Client struct {
 	mu      sync.RWMutex
 	snap    [8]dispatcher.Channel
 	strips  []StripWire
+	page    PageWire
 }
 
 // InitialState holds the full state sent by the daemon on connection.
 type InitialState struct {
 	Snapshot      [8]dispatcher.Channel
 	Strips        []StripWire
+	RouterPage    PageWire
 	Streams       []streams.EnrichedStream
 	Labels        [8]string
 	ConfigPath    string // absolute path to the config file the daemon loaded
@@ -66,6 +68,7 @@ func Connect() (*Client, InitialState, error) {
 		scanner: scanner,
 		snap:    state.Snapshot,
 		strips:  cloneStrips(state.Strips),
+		page:    clonePage(state.RouterPage),
 	}
 	return c, state, nil
 }
@@ -93,6 +96,7 @@ func readInitialState(scanner *bufio.Scanner) (InitialState, error) {
 	return InitialState{
 		Snapshot:      snapFromWire(p.Snapshot),
 		Strips:        cloneStrips(p.Strips),
+		RouterPage:    clonePage(p.RouterPage),
 		Streams:       p.Streams,
 		Labels:        p.Labels,
 		ConfigPath:    p.ConfigPath,
@@ -138,6 +142,12 @@ func (c *Client) Strips() []StripWire {
 	return cloneStrips(c.strips)
 }
 
+func (c *Client) RouterPage() PageWire {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return clonePage(c.page)
+}
+
 // Bind forwards a bind command to the daemon. Implements ui.Dispatcher.
 func (c *Client) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	c.send(kindBind, bindPayload{Ch: ch, ID: id, Name: name, Kind: kind, MPRISName: mprisName, PID: pid, MediaName: mediaName})
@@ -177,7 +187,7 @@ func (c *Client) RequestRouting() {
 type RoutingMsg RoutingSnapshot
 
 // StripsMsg carries generic router strip state pushed by the daemon.
-type StripsMsg []StripWire
+type StripsMsg StripsWire
 
 // RetargetOutput asks the daemon to repoint a crossfade branch's output sink
 // at a different live sink. deviceKey and branch come from a RouteNode/
@@ -238,16 +248,17 @@ func (c *Client) handlePush(env envelope) {
 		}
 
 	case kindStrips:
-		var strips []StripWire
-		if err := json.Unmarshal(env.Data, &strips); err != nil {
+		var payload StripsWire
+		if err := json.Unmarshal(env.Data, &payload); err != nil {
 			log.Printf("client: strips: %v", err)
 			return
 		}
 		c.mu.Lock()
-		c.strips = cloneStrips(strips)
+		c.strips = cloneStrips(payload.Strips)
+		c.page = clonePage(payload.Page)
 		c.mu.Unlock()
 		if c.prog != nil {
-			c.prog.Send(StripsMsg(cloneStrips(strips)))
+			c.prog.Send(StripsMsg{Page: clonePage(payload.Page), Strips: cloneStrips(payload.Strips)})
 		}
 
 	case kindDevice:

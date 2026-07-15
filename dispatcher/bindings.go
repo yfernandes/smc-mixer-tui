@@ -100,7 +100,6 @@ func (d *Dispatcher) LoseBinding(ch int) {
 	d.mu.Lock()
 	d.channels[ch].clearBinding()
 	d.channels[ch].Advanced = false
-	d.channels[ch].advancedSpec = nil
 	oldCancel := d.advancedCancels[ch]
 	d.advancedCancels[ch] = nil
 	d.blinkGen[ch]++
@@ -128,7 +127,6 @@ func (d *Dispatcher) ResetStrip(ch int) {
 	d.channels[ch].Solo = false
 	d.channels[ch].Stop = false
 	d.channels[ch].Advanced = false
-	d.channels[ch].advancedSpec = nil
 	oldCancel := d.advancedCancels[ch]
 	d.advancedCancels[ch] = nil
 	d.blinkGen[ch]++
@@ -202,7 +200,6 @@ func (d *Dispatcher) Unbind(ch int) {
 	d.channels[ch].BoundPID = 0
 	d.channels[ch].ManuallyUnbound = true
 	d.channels[ch].Advanced = false
-	d.channels[ch].advancedSpec = nil
 	oldCancel := d.advancedCancels[ch]
 	d.advancedCancels[ch] = nil
 	d.blinkGen[ch]++

@@ -82,6 +82,30 @@ func TestHandleCmdAppliesDispatcherActions(t *testing.T) {
 	}
 }
 
+func TestHandleCmdForwardsLegacyCommandsForRouterOwnedStrip(t *testing.T) {
+	disp := dispatcher.New(daemonFakePW{})
+	srv := NewServer(disp, [8]string{}, "", "")
+	var bound uint32
+	var muted, soloed, unbound bool
+	srv.RouterOwnsStrip = func(strip int) bool { return strip == 2 }
+	srv.RouterBind = func(_ context.Context, _ int, id uint32) error { bound = id; return nil }
+	srv.RouterMute = func(context.Context, int) error { muted = true; return nil }
+	srv.RouterSolo = func(context.Context, int) error { soloed = true; return nil }
+	srv.RouterUnbind = func(context.Context, int) error { unbound = true; return nil }
+
+	ctx := context.Background()
+	srv.handleCmd(ctx, mustEnvelope(t, kindBind, bindPayload{Ch: 2, ID: 77}))
+	srv.handleCmd(ctx, mustEnvelope(t, kindMute, muteTogglePayload{Ch: 2}))
+	srv.handleCmd(ctx, mustEnvelope(t, kindSolo, soloTogglePayload{Ch: 2}))
+	srv.handleCmd(ctx, mustEnvelope(t, kindUnbind, unbindPayload{Ch: 2}))
+	if bound != 77 || !muted || !soloed || !unbound {
+		t.Fatalf("forwarded state = id:%d mute:%v solo:%v unbind:%v", bound, muted, soloed, unbound)
+	}
+	if disp.Snapshot()[2].StreamID != nil {
+		t.Fatal("router-owned bind reached dispatcher")
+	}
+}
+
 func mustEnvelope(t *testing.T, kind msgKind, payload any) envelope {
 	t.Helper()
 	frame, err := encodeFrame(kind, payload)

@@ -31,22 +31,18 @@ func applyBindings(ctx context.Context, cfg *config.Config, disp *dispatcher.Dis
 		case action.lose:
 			disp.LoseBinding(action.ch)
 		case action.syncSpec:
-			// Stream already matched; only refresh config-derived metadata.
 			dev := cfg.ChannelForPage(activePage, action.ch)
-			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
 			applySyncMode(cfg, disp, action.ch, dev)
 		case action.userBound:
 			// PID-based reconnect: preserve UserBound semantics across stream restarts.
 			snap := disp.Snapshot()
 			disp.UserBind(action.ch, action.id, action.name, action.kind, action.mprisName, snap[action.ch].BoundPID, action.mediaName)
 			dev := cfg.ChannelForPage(activePage, action.ch)
-			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
 			applySyncMode(cfg, disp, action.ch, dev)
 			seedActualVolume(ctx, disp, action.ch, action.id, getVol)
 		default:
 			disp.Bind(action.ch, action.id, action.name, action.kind, action.mprisName)
 			dev := cfg.ChannelForPage(activePage, action.ch)
-			disp.SetAdvancedSpec(action.ch, advancedSpecFrom(dev))
 			applySyncMode(cfg, disp, action.ch, dev)
 			seedActualVolume(ctx, disp, action.ch, action.id, getVol)
 		}
@@ -96,29 +92,6 @@ func applySyncMode(cfg *config.Config, disp *dispatcher.Dispatcher, ch int, dev 
 	}
 	tol := float64(cfg.EffectivePickupToleranceCC()) / 127.0
 	disp.SetChannelSyncMode(ch, dispMode, tol)
-}
-
-func advancedSpecFrom(dev *config.DeviceConfig) *dispatcher.AdvancedSpec {
-	if dev == nil || dev.Advanced == nil {
-		return nil
-	}
-	spec := &dispatcher.AdvancedSpec{}
-	if dev.Advanced.Fader != nil {
-		spec.FaderEffect = dev.Advanced.Fader.Effect
-	}
-	if dev.Advanced.Knob != nil {
-		spec.KnobEffect = dev.Advanced.Knob.Effect
-	}
-	if dev.Advanced.MuteButton != nil {
-		spec.MuteButtonAction = dev.Advanced.MuteButton.Action
-	}
-	if dev.Advanced.SoloButton != nil {
-		spec.SoloButtonAction = dev.Advanced.SoloButton.Action
-	}
-	if dev.Advanced.StopButton != nil {
-		spec.StopButtonAction = dev.Advanced.StopButton.Action
-	}
-	return spec
 }
 
 func configLabels(cfg *config.Config) [8]string {

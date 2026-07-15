@@ -32,6 +32,7 @@ type Server struct {
 
 	stripsMu      sync.RWMutex
 	currentStrips []StripWire
+	currentPage   PageWire
 
 	// AfterCmd is called after each bind/unbind command is applied to the
 	// dispatcher, before BroadcastSnapshot. Use it to update any state that
@@ -47,8 +48,13 @@ type Server struct {
 	RetargetOutput func(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error
 
 	// RouterSet and RouterToggle handle generic strip commands.
-	RouterSet    func(ctx context.Context, target, param string, value backend.Value) error
-	RouterToggle func(ctx context.Context, target, param string) error
+	RouterSet       func(ctx context.Context, target, param string, value backend.Value) error
+	RouterToggle    func(ctx context.Context, target, param string) error
+	RouterOwnsStrip func(strip int) bool
+	RouterBind      func(ctx context.Context, strip int, nodeID uint32) error
+	RouterUnbind    func(ctx context.Context, strip int) error
+	RouterMute      func(ctx context.Context, strip int) error
+	RouterSolo      func(ctx context.Context, strip int) error
 }
 
 // NewServer creates a Server backed by disp. labels are the per-channel config
@@ -107,11 +113,12 @@ func (s *Server) BroadcastSnapshot(snap [8]dispatcher.Channel) {
 }
 
 // BroadcastStrips pushes generic router strip state to all connected clients.
-func (s *Server) BroadcastStrips(strips []StripWire) {
+func (s *Server) BroadcastStrips(strips []StripWire, page PageWire) {
 	s.stripsMu.Lock()
 	s.currentStrips = cloneStrips(strips)
+	s.currentPage = clonePage(page)
 	s.stripsMu.Unlock()
-	s.broadcast(kindStrips, strips)
+	s.broadcast(kindStrips, StripsWire{Page: clonePage(page), Strips: strips})
 }
 
 // BroadcastStreams pushes an updated stream list and caches it for new clients.
@@ -167,11 +174,13 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 	s.streamsMu.RUnlock()
 	s.stripsMu.RLock()
 	currentStrips := cloneStrips(s.currentStrips)
+	currentPage := clonePage(s.currentPage)
 	s.stripsMu.RUnlock()
 
 	init := initialPayload{
 		Snapshot:      snapToWire(s.disp.Snapshot()),
 		Strips:        currentStrips,
+		RouterPage:    currentPage,
 		Streams:       currentStreams,
 		Labels:        s.labels,
 		ConfigPath:    s.configPath,
@@ -286,15 +295,34 @@ func decodeCommand(env envelope) (clientCommand, bool, error) {
 }
 
 func (cmd clientCommand) apply(ctx context.Context, s *Server) {
+	routerOwned := s.RouterOwnsStrip != nil && s.RouterOwnsStrip(cmd.ch)
 	switch cmd.kind {
 	case kindBind:
 		p := cmd.bind
+		if routerOwned && s.RouterBind != nil {
+			if err := s.RouterBind(ctx, p.Ch, p.ID); err != nil {
+				log.Printf("daemon: router bind: %v", err)
+			}
+			return
+		}
 		s.disp.UserBind(p.Ch, p.ID, p.Name, p.Kind, p.MPRISName, p.PID, p.MediaName)
 	case kindUnbind:
+		if routerOwned && s.RouterUnbind != nil {
+			_ = s.RouterUnbind(ctx, cmd.ch)
+			return
+		}
 		s.disp.Unbind(cmd.ch)
 	case kindMute:
+		if routerOwned && s.RouterMute != nil {
+			_ = s.RouterMute(ctx, cmd.ch)
+			return
+		}
 		s.disp.ToggleMute(cmd.ch)
 	case kindSolo:
+		if routerOwned && s.RouterSolo != nil {
+			_ = s.RouterSolo(ctx, cmd.ch)
+			return
+		}
 		s.disp.ToggleSolo(cmd.ch)
 	case kindSet:
 		if s.RouterSet != nil {
@@ -327,6 +355,11 @@ func cloneStrips(in []StripWire) []StripWire {
 		out[i].Ext = append([]byte(nil), s.Ext...)
 	}
 	return out
+}
+
+func clonePage(in PageWire) PageWire {
+	in.Labels = append([]string(nil), in.Labels...)
+	return in
 }
 
 // ── serverConn ────────────────────────────────────────────────────────────────

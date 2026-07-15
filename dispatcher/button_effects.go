@@ -8,27 +8,7 @@ import (
 )
 
 func (d *Dispatcher) applyButtonEffects(ctx context.Context, m midi.ButtonMsg, effects buttonEffects, leds LEDWriter, mpris MPRISCaller) {
-	switch {
-	case effects.advancedToggled:
-		d.applyAdvancedToggleEffects(m, effects, leds)
-	case effects.isAdvancedAction:
-		log.Printf("advanced ch%d %s: action=%q", m.Channel, buttonKindName(m.Kind), effects.advancedAction)
-	default:
-		d.applyNormalButtonEffects(ctx, m, effects, leds, mpris)
-	}
-}
-
-func (d *Dispatcher) applyAdvancedToggleEffects(m midi.ButtonMsg, effects buttonEffects, leds LEDWriter) {
-	if effects.advancedOldCancel != nil {
-		effects.advancedOldCancel()
-	}
-	if effects.advancedNowOn {
-		go d.runAdvancedBlink(effects.advancedBCtx, m.Channel, effects.advancedGen)
-		return
-	}
-	if leds != nil {
-		leds.SetButtonLED(m.Channel, midi.ButtonRec, effects.chRec || effects.chPinned)
-	}
+	d.applyNormalButtonEffects(ctx, m, effects, leds, mpris)
 }
 
 func (d *Dispatcher) applyNormalButtonEffects(ctx context.Context, m midi.ButtonMsg, effects buttonEffects, leds LEDWriter, mpris MPRISCaller) {

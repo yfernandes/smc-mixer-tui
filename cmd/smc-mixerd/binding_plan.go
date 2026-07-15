@@ -15,7 +15,7 @@ type bindingAction struct {
 	mprisName string
 	mediaName string // media.name of the stream (e.g. tab title); stored in BoundMediaName for reconnect
 	lose      bool   // if true: lose binding only, all other fields ignored
-	syncSpec  bool   // if true: sync advancedSpec for an unchanged live binding
+	syncSpec  bool   // if true: refresh config-derived sync metadata
 	userBound bool   // if true: apply via UserBind (PID-based reconnect)
 }
 

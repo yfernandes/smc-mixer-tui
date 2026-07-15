@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yfernandes/smc-mixer-tui/backend"
+	"github.com/yfernandes/smc-mixer-tui/backend/pwbackend"
 	"github.com/yfernandes/smc-mixer-tui/backend/shellexec"
 	"github.com/yfernandes/smc-mixer-tui/config"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
@@ -21,6 +22,7 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/pipewire"
 	"github.com/yfernandes/smc-mixer-tui/router"
 	"github.com/yfernandes/smc-mixer-tui/streams"
+	"github.com/yfernandes/smc-mixer-tui/surface"
 	"github.com/yfernandes/smc-mixer-tui/surface/smc46"
 )
 
@@ -98,9 +100,11 @@ func main() {
 	applyBindings(ctx, cfg, disp, initial, pinned.snapshot(), pw.GetVolume)
 
 	execBackend := shellexec.New(cfg.Exec)
-	rt, err := router.NewFromConfig(map[string]backend.Backend{
+	pwBackend := pwbackend.New(pw, enricher, cfg.Devices)
+	rt, err := router.NewFromConfigWithStrips(map[string]backend.Backend{
 		execBackend.Name(): execBackend,
-	}, cfg.Router)
+		pwBackend.Name():   pwBackend,
+	}, cfg.Router, smc46.Descriptor().Strips)
 	if err != nil {
 		die("router config: %v", err)
 	}
@@ -112,11 +116,18 @@ func main() {
 	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath, Version)
 	srv.RouterSet = rt.SetParam
 	srv.RouterToggle = rt.ToggleParam
-	rt.SetChangeCallback(func(strips []router.StripState) {
-		srv.BroadcastStrips(routerStripsToWire(strips))
+	srv.RouterOwnsStrip = rt.OwnsStrip
+	srv.RouterBind = func(ctx context.Context, strip int, nodeID uint32) error {
+		return rt.ReassignStrip(ctx, strip, backend.TargetID(fmt.Sprintf("pipewire:node/%d", nodeID)))
+	}
+	srv.RouterUnbind = rt.ClearStrip
+	srv.RouterMute = func(ctx context.Context, strip int) error { return rt.ToggleStripParam(ctx, strip, surface.RoleMute) }
+	srv.RouterSolo = rt.ToggleSolo
+	rt.SetChangeCallback(func(strips []router.StripState, page router.PageInfo) {
+		srv.BroadcastStrips(routerStripsToWire(strips), routerPageToWire(page))
 	})
 	rt.Activate(ctx)
-	srv.BroadcastStrips(routerStripsToWire(rt.Snapshot()))
+	srv.BroadcastStrips(routerStripsToWire(rt.Snapshot()), routerPageToWire(rt.PageInfo()))
 	srv.RoutingSnapshot = func(ctx context.Context) daemon.RoutingSnapshot {
 		return buildRoutingSnapshot(ctx, pw, disp, manageCrossfaders, cfg)
 	}
@@ -169,14 +180,22 @@ func main() {
 
 func routeMIDI(ctx context.Context, midiCh <-chan midi.Msg, dispCh chan<- midi.Msg, srv *daemon.Server, disp *dispatcher.Dispatcher, rt *router.Router) {
 	for msg := range midiCh {
+		routerHandled := false
 		if ev, ok := smc46.EventFromMsg(msg); ok && rt != nil {
+			routerHandled = rt.OwnsStrip(ev.Strip)
 			rt.HandleEvent(ctx, ev)
 		}
 		switch m := msg.(type) {
 		case midi.GlobalMsg:
+			if routeGlobalMsg(ctx, rt, m) {
+				continue
+			}
 			srv.BroadcastGlobal(m)
 			disp.OnGlobal(m)
 		default:
+			if routerHandled {
+				continue
+			}
 			select {
 			case dispCh <- msg:
 			default:
@@ -184,6 +203,29 @@ func routeMIDI(ctx context.Context, midiCh <-chan midi.Msg, dispCh chan<- midi.M
 		}
 	}
 	close(dispCh)
+}
+
+func routeGlobalMsg(ctx context.Context, rt *router.Router, m midi.GlobalMsg) bool {
+	if rt == nil || !m.Pressed {
+		return false
+	}
+	role := smc46.RoleFromGlobal(m.Action)
+	if role == "" {
+		return false
+	}
+	if rt.HasPageButton(role) || (rt.ActivePage() && isRouterScrollRole(role)) {
+		return rt.HandleGlobal(ctx, role, true)
+	}
+	return false
+}
+
+func isRouterScrollRole(role surface.Role) bool {
+	switch role {
+	case "up", "down", "left", "right":
+		return true
+	default:
+		return false
+	}
 }
 
 func routerStripsToWire(strips []router.StripState) []daemon.StripWire {
@@ -209,6 +251,16 @@ func routerStripsToWire(strips []router.StripState) []daemon.StripWire {
 		})
 	}
 	return out
+}
+
+func routerPageToWire(page router.PageInfo) daemon.PageWire {
+	return daemon.PageWire{
+		Name:   page.Name,
+		Offset: page.Offset,
+		Total:  page.Total,
+		Labels: append([]string(nil), page.Labels...),
+		Active: page.Active,
+	}
 }
 
 func runMIDIDeviceLoop(ctx context.Context, fixedDevice string, srv *daemon.Server, disp *dispatcher.Dispatcher, rt *router.Router, midiCh chan<- midi.Msg) {

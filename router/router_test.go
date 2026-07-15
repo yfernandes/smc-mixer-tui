@@ -65,6 +65,39 @@ func TestHandleEventIgnoresUnassignedStrip(t *testing.T) {
 	}
 }
 
+func TestSoloMutesOnlyNonSoloedAssignmentsInSameGroup(t *testing.T) {
+	fb := &fakeBackend{infos: []backend.TargetInfo{
+		{ID: "fake:a", Group: "playback", Params: []backend.ParamSpec{{ID: "mute", Kind: backend.ParamToggle, Readable: true}}},
+		{ID: "fake:b", Group: "playback", Params: []backend.ParamSpec{{ID: "mute", Kind: backend.ParamToggle, Readable: true}}},
+		{ID: "fake:c", Group: "capture", Params: []backend.ParamSpec{{ID: "mute", Kind: backend.ParamToggle, Readable: true}}},
+	}, values: map[string]backend.Value{}}
+	rt := New(map[string]backend.Backend{"fake": fb}, map[int]Assignment{
+		0: {Target: "fake:a", Params: map[surface.Role]string{surface.RoleMute: "mute", surface.RoleSolo: "solo"}},
+		1: {Target: "fake:b", Params: map[surface.Role]string{surface.RoleMute: "mute", surface.RoleSolo: "solo"}},
+		2: {Target: "fake:c", Params: map[surface.Role]string{surface.RoleMute: "mute", surface.RoleSolo: "solo"}},
+	})
+	rt.Activate(context.Background())
+	if err := rt.ToggleSolo(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.calls) != 2 {
+		t.Fatalf("mute calls = %+v, want two playback-group calls", fb.calls)
+	}
+	got := map[backend.TargetID]bool{}
+	for _, call := range fb.calls {
+		got[call.target] = call.value.B
+	}
+	if got["fake:a"] {
+		t.Fatalf("soloed target was muted: %+v", fb.calls)
+	}
+	if !got["fake:b"] {
+		t.Fatalf("same-group peer was not muted: %+v", fb.calls)
+	}
+	if _, ok := got["fake:c"]; ok {
+		t.Fatalf("other group was touched: %+v", fb.calls)
+	}
+}
+
 func TestHandleEventAccumulatesKnob(t *testing.T) {
 	fb := &fakeBackend{}
 	rt := New(map[string]backend.Backend{"fake": fb}, map[int]Assignment{
@@ -160,6 +193,74 @@ func TestToggleUsesCachedStateAndOptimisticallyUpdates(t *testing.T) {
 	}
 	if got := rt.Snapshot()[0].Params["mute"].Value.B; !got {
 		t.Fatalf("cached toggle state = %v, want true", got)
+	}
+}
+
+func TestRouterPageActivationAndScrollWindow(t *testing.T) {
+	fb := &fakeBackend{}
+	rt := NewWithPages(map[string]backend.Backend{"fake": fb}, 2, nil, []Page{{
+		Name:   "lights",
+		Button: "play",
+		Assignments: []Assignment{
+			{Label: "A", Target: "fake:a", Params: map[surface.Role]string{surface.RoleFader: "value"}},
+			{Label: "B", Target: "fake:b", Params: map[surface.Role]string{surface.RoleFader: "value"}},
+			{Label: "C", Target: "fake:c", Params: map[surface.Role]string{surface.RoleFader: "value"}},
+		},
+	}})
+
+	if !rt.HandleGlobal(context.Background(), "play", true) {
+		t.Fatal("page button should be handled")
+	}
+	snap := rt.Snapshot()
+	if len(snap) != 2 || snap[0].TargetID != "fake:a" || snap[1].TargetID != "fake:b" {
+		t.Fatalf("initial page window = %+v", snap)
+	}
+	if info := rt.PageInfo(); !info.Active || info.Name != "lights" || info.Offset != 0 || info.Total != 3 {
+		t.Fatalf("page info = %+v", info)
+	}
+
+	rt.HandleGlobal(context.Background(), "down", true)
+	snap = rt.Snapshot()
+	if len(snap) != 2 || snap[0].TargetID != "fake:b" || snap[1].TargetID != "fake:c" {
+		t.Fatalf("scrolled page window = %+v", snap)
+	}
+	rt.HandleGlobal(context.Background(), "down", true)
+	if info := rt.PageInfo(); info.Offset != 1 {
+		t.Fatalf("offset after clamp = %d, want 1", info.Offset)
+	}
+}
+
+func TestRouterPageScrollResetsReadablePickup(t *testing.T) {
+	fb := readableFake(backend.ParamContinuous, backend.Value{F: 0.5})
+	fb.infos = append(fb.infos, backend.TargetInfo{
+		ID:     "fake:other",
+		Label:  "Other",
+		Params: []backend.ParamSpec{{ID: "value", Kind: backend.ParamContinuous, Readable: true}},
+	})
+	fb.values["fake:other/value"] = backend.Value{F: 0.9}
+	rt := NewWithPages(map[string]backend.Backend{"fake": fb}, 1, nil, []Page{{
+		Name:   "lights",
+		Button: "play",
+		Assignments: []Assignment{
+			{Target: "fake:brightness", Params: map[surface.Role]string{surface.RoleFader: "value"}},
+			{Target: "fake:other", Params: map[surface.Role]string{surface.RoleFader: "value"}},
+		},
+	}})
+
+	rt.HandleGlobal(context.Background(), "play", true)
+	rt.HandleEvent(context.Background(), surface.Event{Strip: 0, Role: surface.RoleFader, Value: 0.49})
+	if len(fb.calls) != 1 {
+		t.Fatalf("first assignment should sync/write once, calls=%+v", fb.calls)
+	}
+
+	rt.HandleGlobal(context.Background(), "down", true)
+	rt.HandleEvent(context.Background(), surface.Event{Strip: 0, Role: surface.RoleFader, Value: 0.5})
+	if len(fb.calls) != 1 {
+		t.Fatalf("new assignment wrote before pickup, calls=%+v", fb.calls)
+	}
+	snap := rt.Snapshot()
+	if snap[0].Params["value"].Synced {
+		t.Fatalf("new assignment should start unsynced: %+v", snap[0].Params["value"])
 	}
 }
 

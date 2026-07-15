@@ -808,28 +808,6 @@ func TestEvictedChannelNotManuallyUnbound(t *testing.T) {
 	}
 }
 
-// TestAdvancedBlinkCancelStoredUnderLock verifies fix 3: the blink goroutine's
-// cancel func is stored in advancedCancels while the lock is still held, so a
-// concurrent OnGlobal page switch cannot miss the cancel and leave a ghost goroutine.
-func TestAdvancedBlinkCancelStoredUnderLock(t *testing.T) {
-	d := New(newFakePW())
-	d.Bind(0, 10, "App", audio.KindSource, "")
-	d.SetAdvancedSpec(0, &AdvancedSpec{MuteButtonAction: "mute"})
-
-	// Activate advanced mode (R short press on bound channel with advanced spec).
-	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonRec, Pressed: true})
-	send(d, midi.ButtonMsg{Channel: 0, Kind: midi.ButtonRec, Pressed: false})
-
-	// Immediately switch page — this simulates the concurrent OnGlobal and must
-	// find the cancel func already stored (not nil), so the goroutine is cancelled.
-	d.OnGlobal(midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true})
-
-	// After page switch, Advanced must be false.
-	if d.Snapshot()[0].Advanced {
-		t.Fatal("Advanced should be false after page switch")
-	}
-}
-
 func TestUpdatePlaybackStatusForStream(t *testing.T) {
 	d := New(newFakePW())
 	const streamID uint32 = 42

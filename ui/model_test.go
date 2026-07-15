@@ -44,6 +44,7 @@ type toggleCall struct {
 
 func (f *fakeDisp) Snapshot() [8]dispatcher.Channel { return f.snap }
 func (f *fakeDisp) Strips() []daemon.StripWire      { return nil }
+func (f *fakeDisp) RouterPage() daemon.PageWire     { return daemon.PageWire{} }
 func (f *fakeDisp) Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string) {
 	f.binds = append(f.binds, bindCall{ch, id, name, kind, mprisName, pid, mediaName})
 }

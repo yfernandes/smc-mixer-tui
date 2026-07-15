@@ -64,30 +64,13 @@ func (k KnobConfig) IsSend() bool { return k.Type == KnobSend }
 
 // DeviceConfig describes a named audio device that can be assigned to a channel slot.
 type DeviceConfig struct {
-	Label      string          `yaml:"label"`
-	Type       BindType        `yaml:"type"`                  // "input", "playback", or "output"
-	Match      string          `yaml:"match,omitempty"`       // case-insensitive substring on Name/BindKey
-	MatchRegex string          `yaml:"match-regex,omitempty"` // regex applied to stream Name/BindKey
-	MatchTitle string          `yaml:"match-title,omitempty"` // case-insensitive substring on window title
-	Knob       *KnobConfig     `yaml:"knob,omitempty"`        // per-device override; nil = use default for type
-	Advanced   *AdvancedConfig `yaml:"advanced,omitempty"`    // reserved; not yet implemented
-	SyncMode   SyncMode        `yaml:"sync_mode,omitempty"`   // per-device override; "" inherits global default
-}
-
-// AdvancedConfig holds future per-device advanced behaviors. Not yet implemented.
-type AdvancedConfig struct {
-	Fader      *ControlConfig `yaml:"fader,omitempty"`
-	Knob       *ControlConfig `yaml:"knob,omitempty"`
-	MuteButton *ControlConfig `yaml:"mute-button,omitempty"`
-	SoloButton *ControlConfig `yaml:"solo-button,omitempty"`
-	StopButton *ControlConfig `yaml:"stop-button,omitempty"`
-}
-
-// ControlConfig holds the shape for a control action or effect. Not yet implemented.
-type ControlConfig struct {
-	Type   string `yaml:"type,omitempty"`
-	Effect string `yaml:"effect,omitempty"`
-	Action string `yaml:"action,omitempty"`
+	Label      string      `yaml:"label"`
+	Type       BindType    `yaml:"type"`                  // "input", "playback", or "output"
+	Match      string      `yaml:"match,omitempty"`       // case-insensitive substring on Name/BindKey
+	MatchRegex string      `yaml:"match-regex,omitempty"` // regex applied to stream Name/BindKey
+	MatchTitle string      `yaml:"match-title,omitempty"` // case-insensitive substring on window title
+	Knob       *KnobConfig `yaml:"knob,omitempty"`        // per-device override; nil = use default for type
+	SyncMode   SyncMode    `yaml:"sync_mode,omitempty"`   // per-device override; "" inherits global default
 }
 
 // BindType describes which kind of audio node a device represents.
@@ -135,10 +118,17 @@ type ExecTargetConfig struct {
 // legacy page/device schema.
 type RouterConfig struct {
 	Assignments map[int]AssignmentConfig `yaml:"assignments,omitempty"`
+	Pages       []RouterPageConfig       `yaml:"pages,omitempty"`
 }
 
 type AssignmentConfig struct {
 	Label  string            `yaml:"label,omitempty"`
 	Target string            `yaml:"target"`
 	Params map[string]string `yaml:"params"`
+}
+
+type RouterPageConfig struct {
+	Name        string             `yaml:"name"`
+	Button      string             `yaml:"button"`
+	Assignments []AssignmentConfig `yaml:"assignments"`
 }

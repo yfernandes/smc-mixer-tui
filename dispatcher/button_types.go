@@ -1,10 +1,6 @@
 package dispatcher
 
-import (
-	"context"
-
-	"github.com/yfernandes/smc-mixer-tui/midi"
-)
+import "github.com/yfernandes/smc-mixer-tui/midi"
 
 type muteUpdate struct {
 	ch    int
@@ -21,16 +17,6 @@ type buttonEffects struct {
 	chMPRIS         string
 	soloUpdates     []muteUpdate
 	soloLEDs        []buttonLED
-
-	advancedToggled   bool
-	advancedNowOn     bool
-	advancedOldCancel context.CancelFunc
-	advancedBCtx      context.Context
-	advancedGen       uint32
-	chRec             bool
-	chPinned          bool
-	isAdvancedAction  bool
-	advancedAction    string
 }
 
 type buttonLED struct {

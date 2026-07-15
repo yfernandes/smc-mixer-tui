@@ -16,6 +16,7 @@ import (
 type Dispatcher interface {
 	Snapshot() [8]dispatcher.Channel
 	Strips() []daemon.StripWire
+	RouterPage() daemon.PageWire
 	Bind(ch int, id uint32, name string, kind audio.NodeKind, mprisName string, pid uint32, mediaName string)
 	Unbind(ch int)
 	ToggleMute(ch int)
@@ -59,6 +60,7 @@ type Model struct {
 
 	channels   [8]dispatcher.Channel
 	strips     map[int]daemon.StripWire
+	routerPage daemon.PageWire
 	labels     [8]string
 	stripCfgs  [8]StripConfig
 	enriched   []streams.EnrichedStream
@@ -133,11 +135,16 @@ func New(disp Dispatcher, snap [8]dispatcher.Channel, labels [8]string, initial 
 	if len(initialStrips) > 0 {
 		strips = stripsByIndex(initialStrips[0])
 	}
+	var page daemon.PageWire
+	if disp != nil {
+		page = disp.RouterPage()
+	}
 	return Model{
 		disp:            disp,
 		reloadFn:        reloadFn,
 		channels:        snap,
 		strips:          strips,
+		routerPage:      page,
 		labels:          labels,
 		stripCfgs:       stripCfgs,
 		enriched:        sortedByKind(initial),
@@ -242,7 +249,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd(m.disp)
 	case daemon.StripsMsg:
-		m.strips = stripsByIndex([]daemon.StripWire(msg))
+		m.routerPage = msg.Page
+		m.strips = stripsByIndex(msg.Strips)
 	case streams.UpdateMsg:
 		m.enriched = sortedByKind([]streams.EnrichedStream(msg))
 	case tea.WindowSizeMsg:

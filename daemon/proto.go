@@ -72,7 +72,7 @@ func decodeEnvelope(frame []byte) (envelope, error) {
 // ── Push payloads (daemon → client) ──────────────────────────────────────────
 
 // channelWire is the JSON-safe form of dispatcher.Channel.
-// Unexported fields (crossfader, advancedSpec) are omitted.
+// Unexported crossfader fields are omitted.
 type channelWire struct {
 	StreamID       *uint32        `json:"stream_id,omitempty"`
 	Name           string         `json:"name"`
@@ -170,6 +170,19 @@ type StripWire struct {
 	Ext      json.RawMessage      `json:"ext,omitempty"`
 }
 
+type PageWire struct {
+	Name   string   `json:"name,omitempty"`
+	Offset int      `json:"offset,omitempty"`
+	Total  int      `json:"total,omitempty"`
+	Labels []string `json:"labels,omitempty"`
+	Active bool     `json:"active,omitempty"`
+}
+
+type StripsWire struct {
+	Page   PageWire    `json:"page,omitempty"`
+	Strips []StripWire `json:"strips"`
+}
+
 type ParamWire struct {
 	Kind     uint8   `json:"kind"`
 	Value    float64 `json:"value"`
@@ -182,6 +195,7 @@ type ParamWire struct {
 type initialPayload struct {
 	Snapshot      snapshotWire             `json:"snapshot"`
 	Strips        []StripWire              `json:"strips,omitempty"`
+	RouterPage    PageWire                 `json:"router_page,omitempty"`
 	Streams       []streams.EnrichedStream `json:"streams"`
 	Labels        [8]string                `json:"labels"`
 	ConfigPath    string                   `json:"config_path,omitempty"`

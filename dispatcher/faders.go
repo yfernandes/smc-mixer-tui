@@ -28,13 +28,6 @@ func (d *Dispatcher) onFader(ctx context.Context, m midi.FaderMsg) {
 	faderPos := float64(m.Value) / 16383.0
 
 	d.mu.Lock()
-	adv := d.channels[m.Channel].Advanced
-	advSpec := d.channels[m.Channel].advancedSpec
-	if adv && advSpec != nil {
-		d.mu.Unlock()
-		log.Printf("advanced fader ch%d: effect=%q value=%d", m.Channel, advSpec.FaderEffect, m.Value)
-		return
-	}
 	update := d.channels[m.Channel].moveFader(faderPos)
 	d.mu.Unlock()
 

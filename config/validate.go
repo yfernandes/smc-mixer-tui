@@ -129,34 +129,103 @@ func (c *Config) validateExecTargets() error {
 
 // ValidateRouter validates router assignments against the provided surface strip count.
 func (c *Config) ValidateRouter(strips int) error {
+	routerRules := make(map[string]string)
 	for strip, assignment := range c.Router.Assignments {
 		if strip < 0 || strip >= strips {
 			return fmt.Errorf("router assignment %d: strip outside surface range 0..%d", strip, strips-1)
 		}
-		if assignment.Target == "" {
-			return fmt.Errorf("router assignment %d: target is required", strip)
-		}
-		if assignment.Params == nil || len(assignment.Params) == 0 {
-			return fmt.Errorf("router assignment %d: params are required", strip)
-		}
-		if err := c.validateRouterTarget(strip, assignment.Target); err != nil {
+		if err := c.validateRouterAssignment(fmt.Sprintf("router assignment %d", strip), assignment); err != nil {
 			return err
+		}
+		if strings.HasPrefix(assignment.Target, "pipewire:rule/") {
+			routerRules[strings.TrimPrefix(assignment.Target, "pipewire:rule/")] = "base"
+		}
+	}
+	legacyButtons := make(map[string]string)
+	for name, page := range c.Pages {
+		if page.Button != "" {
+			legacyButtons[page.Button] = name
+		}
+	}
+	routerButtons := make(map[string]string)
+	for i, page := range c.Router.Pages {
+		loc := fmt.Sprintf("router page %d", i)
+		if page.Name == "" {
+			return fmt.Errorf("%s: name is required", loc)
+		}
+		if page.Button == "" {
+			return fmt.Errorf("router page %q: button is required", page.Name)
+		}
+		if legacy, ok := legacyButtons[page.Button]; ok {
+			return fmt.Errorf("router page %q: button %q collides with legacy page %q", page.Name, page.Button, legacy)
+		}
+		if prev, ok := routerButtons[page.Button]; ok {
+			return fmt.Errorf("router page %q: button %q collides with router page %q", page.Name, page.Button, prev)
+		}
+		routerButtons[page.Button] = page.Name
+		if len(page.Assignments) == 0 {
+			return fmt.Errorf("router page %q: assignments are required", page.Name)
+		}
+		for j, assignment := range page.Assignments {
+			if err := c.validateRouterAssignment(fmt.Sprintf("router page %q assignment %d", page.Name, j), assignment); err != nil {
+				return err
+			}
+			if strings.HasPrefix(assignment.Target, "pipewire:rule/") {
+				routerRules[strings.TrimPrefix(assignment.Target, "pipewire:rule/")] = page.Name
+			}
+		}
+	}
+	for pageName, page := range c.Pages {
+		for _, slots := range []map[int]*string{page.Faders, page.Knobs, page.Channels} {
+			for _, key := range slots {
+				if key == nil {
+					continue
+				}
+				if routerPage, exists := routerRules[*key]; exists {
+					return fmt.Errorf("device %q is controlled by router page %q and legacy page %q", *key, routerPage, pageName)
+				}
+			}
 		}
 	}
 	return nil
 }
 
-func (c *Config) validateRouterTarget(strip int, target string) error {
-	const prefix = "exec:"
-	if !strings.HasPrefix(target, prefix) || len(target) == len(prefix) {
-		return fmt.Errorf("router assignment %d: unsupported target %q", strip, target)
+func (c *Config) validateRouterAssignment(loc string, assignment AssignmentConfig) error {
+	if assignment.Target == "" {
+		return fmt.Errorf("%s: target is required", loc)
 	}
-	key := strings.TrimPrefix(target, prefix)
-	if c.Exec == nil {
-		return fmt.Errorf("router assignment %d: unknown exec target %q", strip, key)
+	if assignment.Params == nil || len(assignment.Params) == 0 {
+		return fmt.Errorf("%s: params are required", loc)
 	}
-	if _, ok := c.Exec[key]; !ok {
-		return fmt.Errorf("router assignment %d: unknown exec target %q", strip, key)
+	if err := c.validateRouterTarget(loc, assignment.Target); err != nil {
+		return err
 	}
 	return nil
+}
+
+func (c *Config) validateRouterTarget(loc, target string) error {
+	switch {
+	case strings.HasPrefix(target, "exec:"):
+		key := strings.TrimPrefix(target, "exec:")
+		if key == "" || c.Exec == nil {
+			return fmt.Errorf("%s: unknown exec target %q", loc, key)
+		}
+		if _, ok := c.Exec[key]; !ok {
+			return fmt.Errorf("%s: unknown exec target %q", loc, key)
+		}
+		return nil
+	case strings.HasPrefix(target, "pipewire:node/"):
+		if strings.TrimPrefix(target, "pipewire:node/") == "" {
+			return fmt.Errorf("%s: invalid PipeWire node target %q", loc, target)
+		}
+		return nil
+	case strings.HasPrefix(target, "pipewire:rule/"):
+		key := strings.TrimPrefix(target, "pipewire:rule/")
+		if _, ok := c.Devices[key]; !ok {
+			return fmt.Errorf("%s: unknown PipeWire rule target %q", loc, key)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s: unsupported target %q", loc, target)
+	}
 }

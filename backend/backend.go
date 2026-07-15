@@ -27,6 +27,7 @@ type ParamSpec struct {
 type TargetInfo struct {
 	ID     TargetID
 	Label  string
+	Group  string
 	Params []ParamSpec
 	Ext    json.RawMessage
 }

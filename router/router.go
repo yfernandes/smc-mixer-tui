@@ -46,23 +46,38 @@ type StripState struct {
 	Ext      json.RawMessage
 }
 
+type PageInfo struct {
+	Name   string
+	Offset int
+	Total  int
+	Labels []string
+	Active bool
+}
+
 type Router struct {
 	mu           sync.Mutex
 	backends     map[string]backend.Backend
+	strips       int
+	base         map[int]Assignment
 	assignments  map[int]Assignment
+	pages        []Page
+	activePage   int
 	knobs        map[int]int
 	states       map[int]*assignState
 	pollInterval time.Duration
 	feedback     surface.FeedbackWriter
-	onChange     func([]StripState)
+	onChange     func([]StripState, PageInfo)
 }
 
 type assignState struct {
-	label       string
-	backendName string
-	specs       map[string]backend.ParamSpec
-	params      map[string]*paramRuntime
-	ext         json.RawMessage
+	label          string
+	backendName    string
+	group          string
+	soloMuted      bool
+	muteBeforeSolo bool
+	specs          map[string]backend.ParamSpec
+	params         map[string]*paramRuntime
+	ext            json.RawMessage
 }
 
 type paramRuntime struct {
@@ -74,14 +89,26 @@ type paramRuntime struct {
 }
 
 func New(backends map[string]backend.Backend, assignments map[int]Assignment) *Router {
+	return NewWithPages(backends, 8, assignments, nil)
+}
+
+func NewWithPages(backends map[string]backend.Backend, strips int, assignments map[int]Assignment, pages []Page) *Router {
+	if strips <= 0 {
+		strips = 8
+	}
+	base := cloneAssignments(assignments)
 	r := &Router{
 		backends:     backends,
-		assignments:  assignments,
+		strips:       strips,
+		base:         base,
+		assignments:  cloneAssignments(base),
+		pages:        clonePages(pages),
+		activePage:   -1,
 		knobs:        make(map[int]int),
 		states:       make(map[int]*assignState),
 		pollInterval: defaultPollInterval,
 	}
-	for strip := range assignments {
+	for strip := range r.assignments {
 		r.states[strip] = &assignState{
 			specs:  make(map[string]backend.ParamSpec),
 			params: make(map[string]*paramRuntime),
@@ -91,22 +118,42 @@ func New(backends map[string]backend.Backend, assignments map[int]Assignment) *R
 }
 
 func NewFromConfig(backends map[string]backend.Backend, cfg config.RouterConfig) (*Router, error) {
-	assignments := make(map[int]Assignment, len(cfg.Assignments))
-	for strip, ac := range cfg.Assignments {
-		params := make(map[surface.Role]string, len(ac.Params))
-		for role, param := range ac.Params {
-			params[surface.Role(role)] = param
-		}
-		assignments[strip] = Assignment{
-			Label:  ac.Label,
-			Target: backend.TargetID(ac.Target),
-			Params: params,
-		}
-	}
-	return New(backends, assignments), nil
+	return NewFromConfigWithStrips(backends, cfg, 8)
 }
 
-func (r *Router) SetChangeCallback(fn func([]StripState)) {
+func NewFromConfigWithStrips(backends map[string]backend.Backend, cfg config.RouterConfig, strips int) (*Router, error) {
+	assignments := make(map[int]Assignment, len(cfg.Assignments))
+	for strip, ac := range cfg.Assignments {
+		assignments[strip] = assignmentFromConfig(ac)
+	}
+	pages := make([]Page, 0, len(cfg.Pages))
+	for _, pc := range cfg.Pages {
+		page := Page{
+			Name:        pc.Name,
+			Button:      surface.Role(pc.Button),
+			Assignments: make([]Assignment, 0, len(pc.Assignments)),
+		}
+		for _, ac := range pc.Assignments {
+			page.Assignments = append(page.Assignments, assignmentFromConfig(ac))
+		}
+		pages = append(pages, page)
+	}
+	return NewWithPages(backends, strips, assignments, pages), nil
+}
+
+func assignmentFromConfig(ac config.AssignmentConfig) Assignment {
+	params := make(map[surface.Role]string, len(ac.Params))
+	for role, param := range ac.Params {
+		params[surface.Role(role)] = param
+	}
+	return Assignment{
+		Label:  ac.Label,
+		Target: backend.TargetID(ac.Target),
+		Params: params,
+	}
+}
+
+func (r *Router) SetChangeCallback(fn func([]StripState, PageInfo)) {
 	r.mu.Lock()
 	r.onChange = fn
 	r.mu.Unlock()
@@ -134,6 +181,7 @@ func (r *Router) Run(ctx context.Context) {
 				go w.Watch(ctx, ch)
 				for infos := range ch {
 					r.applyTargetInfos(b.Name(), infos)
+					r.seedReadable(ctx)
 					r.notify()
 				}
 			}(b, w)
@@ -148,9 +196,108 @@ func (r *Router) Snapshot() []StripState {
 	return r.snapshotLocked()
 }
 
+func (r *Router) PageInfo() PageInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pageInfoLocked()
+}
+
+func (r *Router) ActivePage() bool {
+	return r.PageInfo().Active
+}
+
+func (r *Router) OwnsStrip(strip int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.assignments[strip]
+	return ok
+}
+
+func (r *Router) HasPageButton(role surface.Role) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pageIndexByButtonLocked(role) >= 0
+}
+
+func (r *Router) HandleGlobal(ctx context.Context, role surface.Role, pressed bool) bool {
+	if !pressed {
+		return false
+	}
+	r.mu.Lock()
+	if idx := r.pageIndexByButtonLocked(role); idx >= 0 {
+		oldAssignments := cloneAssignments(r.assignments)
+		if r.activePage == idx {
+			r.activePage = -1
+			r.assignments = cloneAssignments(r.base)
+		} else {
+			r.activePage = idx
+			r.pages[idx].Offset = clampOffset(r.pages[idx].Offset, len(r.pages[idx].Assignments), r.strips)
+			r.assignments = r.pageWindowLocked(idx)
+		}
+		r.resetVisibleStateLocked()
+		snap := r.snapshotLocked()
+		r.mu.Unlock()
+		r.clearDepartedFeedback(oldAssignments, snap)
+		r.refreshVisible(ctx)
+		r.notify()
+		return true
+	}
+	if r.activePage >= 0 && isScrollRole(role) {
+		oldAssignments := cloneAssignments(r.assignments)
+		page := &r.pages[r.activePage]
+		old := page.Offset
+		switch role {
+		case "up", "left":
+			page.Offset--
+		case "down", "right":
+			page.Offset++
+		}
+		page.Offset = clampOffset(page.Offset, len(page.Assignments), r.strips)
+		if page.Offset == old {
+			r.mu.Unlock()
+			return true
+		}
+		r.assignments = r.pageWindowLocked(r.activePage)
+		r.resetVisibleStateLocked()
+		snap := r.snapshotLocked()
+		r.mu.Unlock()
+		r.clearDepartedFeedback(oldAssignments, snap)
+		r.refreshVisible(ctx)
+		r.notify()
+		return true
+	}
+	r.mu.Unlock()
+	return false
+}
+
+func (r *Router) clearDepartedFeedback(old map[int]Assignment, snap []StripState) {
+	r.mu.Lock()
+	fw := r.feedback
+	currentAssignments := cloneAssignments(r.assignments)
+	r.mu.Unlock()
+	if fw == nil {
+		return
+	}
+	current := make(map[int]bool, len(snap))
+	for _, s := range snap {
+		current[s.Strip] = true
+	}
+	for strip, a := range old {
+		if current[strip] && sameAssignment(a, currentAssignments[strip]) {
+			continue
+		}
+		for role := range a.Params {
+			fw.SetLED(strip, role, false)
+		}
+	}
+}
+
 func (r *Router) HandleEvent(ctx context.Context, ev surface.Event) bool {
 	if ev.Strip < 0 {
 		return false
+	}
+	if ev.Role == surface.RoleSolo && ev.Pressed {
+		return r.ToggleSolo(ctx, ev.Strip) == nil
 	}
 	a, param, spec, value, shouldSet := r.handleEventState(ev)
 	if param == "" {
@@ -172,6 +319,44 @@ func (r *Router) HandleEvent(ctx context.Context, ev surface.Event) bool {
 		r.notify()
 	}
 	return true
+}
+
+// ReassignStrip replaces the visible assignment target, used by legacy bind IPC
+// while a router page is active. The page item is updated as well, so scrolling
+// away and back preserves the ad-hoc binding.
+func (r *Router) ReassignStrip(ctx context.Context, strip int, target backend.TargetID) error {
+	r.mu.Lock()
+	a, ok := r.assignments[strip]
+	if !ok || r.activePage < 0 {
+		r.mu.Unlock()
+		return fmt.Errorf("router: strip %d is not router-owned", strip)
+	}
+	a.Target = target
+	r.assignments[strip] = a
+	idx := r.pages[r.activePage].Offset + strip
+	if idx < len(r.pages[r.activePage].Assignments) {
+		r.pages[r.activePage].Assignments[idx] = a
+	}
+	r.resetVisibleStateLocked()
+	r.mu.Unlock()
+	r.refreshVisible(ctx)
+	r.notify()
+	return nil
+}
+
+func (r *Router) ClearStrip(ctx context.Context, strip int) error {
+	return r.ReassignStrip(ctx, strip, "")
+}
+
+func (r *Router) ToggleStripParam(ctx context.Context, strip int, role surface.Role) error {
+	r.mu.Lock()
+	a, ok := r.assignments[strip]
+	param := a.Params[role]
+	r.mu.Unlock()
+	if !ok || param == "" {
+		return fmt.Errorf("router: strip %d has no %s parameter", strip, role)
+	}
+	return r.ToggleParam(ctx, string(a.Target), param)
 }
 
 func (r *Router) SetParam(ctx context.Context, target, param string, value backend.Value) error {
@@ -385,6 +570,7 @@ func (r *Router) applyTargetInfos(name string, infos []backend.TargetInfo) {
 			}
 			st := r.stateForLocked(strip)
 			st.backendName = name
+			st.group = info.Group
 			st.label = a.Label
 			if st.label == "" {
 				st.label = info.Label
@@ -481,10 +667,11 @@ func (r *Router) notify() {
 	r.mu.Lock()
 	snap := r.snapshotLocked()
 	cb := r.onChange
+	info := r.pageInfoLocked()
 	r.mu.Unlock()
 	r.applyFeedback(snap)
 	if cb != nil {
-		cb(snap)
+		cb(snap, info)
 	}
 }
 
@@ -508,6 +695,11 @@ func (r *Router) applyFeedback(snap []StripState) {
 			}
 		}
 	}
+}
+
+func (r *Router) refreshVisible(ctx context.Context) {
+	r.refreshTargets(ctx)
+	r.seedReadable(ctx)
 }
 
 func (r *Router) snapshotLocked() []StripState {
@@ -539,6 +731,59 @@ func (r *Router) snapshotLocked() []StripState {
 		})
 	}
 	return out
+}
+
+func (r *Router) pageInfoLocked() PageInfo {
+	if r.activePage < 0 || r.activePage >= len(r.pages) {
+		return PageInfo{}
+	}
+	page := r.pages[r.activePage]
+	labels := make([]string, len(page.Assignments))
+	for i, a := range page.Assignments {
+		labels[i] = a.Label
+		if labels[i] == "" {
+			labels[i] = string(a.Target)
+		}
+	}
+	return PageInfo{Name: page.Name, Offset: page.Offset, Total: len(page.Assignments), Labels: labels, Active: true}
+}
+
+func (r *Router) pageIndexByButtonLocked(role surface.Role) int {
+	for i, page := range r.pages {
+		if page.Button == role {
+			return i
+		}
+	}
+	return -1
+}
+
+func (r *Router) pageWindowLocked(idx int) map[int]Assignment {
+	page := r.pages[idx]
+	out := make(map[int]Assignment)
+	for strip := 0; strip < r.strips; strip++ {
+		assignmentIdx := page.Offset + strip
+		if assignmentIdx >= len(page.Assignments) {
+			break
+		}
+		out[strip] = page.Assignments[assignmentIdx]
+	}
+	return out
+}
+
+func (r *Router) resetVisibleStateLocked() {
+	for strip := range r.assignments {
+		r.states[strip] = &assignState{
+			specs:       make(map[string]backend.ParamSpec),
+			params:      make(map[string]*paramRuntime),
+			backendName: backendName(r.assignments[strip].Target),
+			label:       r.assignments[strip].Label,
+		}
+	}
+	for strip := range r.states {
+		if _, ok := r.assignments[strip]; !ok {
+			delete(r.states, strip)
+		}
+	}
 }
 
 func (r *Router) stateForLocked(strip int) *assignState {
@@ -601,4 +846,69 @@ func clampInt(v, min, max int) int {
 		return max
 	}
 	return v
+}
+
+func clampOffset(offset, total, strips int) int {
+	max := total - strips
+	if max < 0 {
+		max = 0
+	}
+	return clampInt(offset, 0, max)
+}
+
+func isScrollRole(role surface.Role) bool {
+	switch role {
+	case "up", "down", "left", "right":
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneAssignments(in map[int]Assignment) map[int]Assignment {
+	if in == nil {
+		return nil
+	}
+	out := make(map[int]Assignment, len(in))
+	for strip, a := range in {
+		params := make(map[surface.Role]string, len(a.Params))
+		for role, param := range a.Params {
+			params[role] = param
+		}
+		a.Params = params
+		out[strip] = a
+	}
+	return out
+}
+
+func clonePages(in []Page) []Page {
+	if in == nil {
+		return nil
+	}
+	out := make([]Page, len(in))
+	for i, page := range in {
+		out[i] = page
+		out[i].Assignments = make([]Assignment, len(page.Assignments))
+		for j, a := range page.Assignments {
+			params := make(map[surface.Role]string, len(a.Params))
+			for role, param := range a.Params {
+				params[role] = param
+			}
+			a.Params = params
+			out[i].Assignments[j] = a
+		}
+	}
+	return out
+}
+
+func sameAssignment(a, b Assignment) bool {
+	if a.Label != b.Label || a.Target != b.Target || len(a.Params) != len(b.Params) {
+		return false
+	}
+	for role, param := range a.Params {
+		if b.Params[role] != param {
+			return false
+		}
+	}
+	return true
 }

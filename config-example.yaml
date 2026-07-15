@@ -87,13 +87,32 @@ exec:
     scale: [0, 100]
 
 router:
-  # Phase 1 flat overlay: a router-assigned strip still also reaches the legacy
-  # dispatcher, so do not bind the same strip to audio on the active page.
+  # A router-assigned strip is exclusively router-owned; its events do not also
+  # reach the legacy dispatcher.
   assignments:
     3:
       target: "exec:brightness"
       params:
         fader: "value"
+  # Phase 3 pages: a router page can contain more assignments than the surface
+  # has strips. Up/Down scroll the visible window while a router page is active.
+  # The button must not collide with any legacy page button below.
+  pages:
+    - name: lights
+      button: seek-forward
+      assignments:
+        - target: "exec:brightness"
+          params:
+            fader: "value"
+    # To migrate a simple audio page, remove the legacy page using its button
+    # and add assignments like this. Rule names reference keys under devices;
+    # ad-hoc TUI binds replace them with pipewire:node/<id> targets.
+    # - name: playback
+    #   button: play
+    #   assignments:
+    #     - label: Spotify
+    #       target: "pipewire:rule/spotify"
+    #       params: {fader: volume, mute: mute, solo: solo, stop: playpause}
 
 pages:
   main:

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -372,6 +373,51 @@ func TestValidateAcceptsRouterExecAssignment(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsRouterPageAssignments(t *testing.T) {
+	cfg := Config{
+		Exec: map[string]ExecTargetConfig{
+			"desk":  {Command: "desk"},
+			"shelf": {Command: "shelf"},
+		},
+		Router: RouterConfig{
+			Pages: []RouterPageConfig{{
+				Name:   "lights",
+				Button: "play",
+				Assignments: []AssignmentConfig{
+					{Target: "exec:desk", Params: map[string]string{"fader": "value"}},
+					{Target: "exec:shelf", Params: map[string]string{"fader": "value"}},
+				},
+			}},
+		},
+	}
+	if err := cfg.ValidateRouter(1); err != nil {
+		t.Fatalf("ValidateRouter: %v", err)
+	}
+}
+
+func TestValidateRejectsRouterPageLegacyButtonCollision(t *testing.T) {
+	cfg := Config{
+		Pages: map[string]PageConfig{
+			"applications": {Button: "play"},
+		},
+		Exec: map[string]ExecTargetConfig{
+			"desk": {Command: "desk"},
+		},
+		Router: RouterConfig{
+			Pages: []RouterPageConfig{{
+				Name:   "lights",
+				Button: "play",
+				Assignments: []AssignmentConfig{
+					{Target: "exec:desk", Params: map[string]string{"fader": "value"}},
+				},
+			}},
+		},
+	}
+	if err := cfg.ValidateRouter(8); err == nil || !strings.Contains(err.Error(), "collides with legacy page") {
+		t.Fatalf("ValidateRouter error = %v, want legacy collision", err)
+	}
+}
+
 func TestValidateRejectsRouterUnknownExecTarget(t *testing.T) {
 	cfg := &Config{
 		Exec: map[string]ExecTargetConfig{
@@ -385,6 +431,34 @@ func TestValidateRejectsRouterUnknownExecTarget(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("unknown exec target should fail validation")
+	}
+}
+
+func TestValidateAcceptsPipeWireRuleTarget(t *testing.T) {
+	cfg := &Config{
+		Devices: map[string]DeviceConfig{"music": {Type: BindPlayback, Match: "spotify"}},
+		Router: RouterConfig{Pages: []RouterPageConfig{{
+			Name: "audio", Button: "play",
+			Assignments: []AssignmentConfig{{Target: "pipewire:rule/music", Params: map[string]string{"fader": "volume"}}},
+		}}},
+	}
+	if err := cfg.ValidateRouter(8); err != nil {
+		t.Fatalf("ValidateRouter: %v", err)
+	}
+}
+
+func TestValidateRejectsPipeWireRuleOwnedByBothWorlds(t *testing.T) {
+	music := "music"
+	cfg := &Config{
+		Devices: map[string]DeviceConfig{"music": {Type: BindPlayback, Match: "spotify"}},
+		Pages:   map[string]PageConfig{"legacy": {Channels: map[int]*string{0: &music}}},
+		Router: RouterConfig{Pages: []RouterPageConfig{{
+			Name: "audio", Button: "play",
+			Assignments: []AssignmentConfig{{Target: "pipewire:rule/music", Params: map[string]string{"fader": "volume"}}},
+		}}},
+	}
+	if err := cfg.ValidateRouter(8); err == nil || !strings.Contains(err.Error(), "controlled by router page") {
+		t.Fatalf("ValidateRouter error = %v, want double-control rejection", err)
 	}
 }
 

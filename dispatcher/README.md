@@ -110,16 +110,6 @@ func (d *Dispatcher) ActivePage() string
 
 func (d *Dispatcher) UpdatePlaybackStatus(ch int, playing bool)
 
-type AdvancedSpec struct {
-	FaderEffect      string
-	KnobEffect       string
-	MuteButtonAction string
-	SoloButtonAction string
-	StopButtonAction string
-}
-
-func (d *Dispatcher) SetAdvancedSpec(ch int, spec *AdvancedSpec)
-
 func (d *Dispatcher) SetPinCallback(cb func(ch int))
 
 func (d *Dispatcher) SetPinned(ch int, pinned bool)

@@ -112,13 +112,23 @@ Until the deletion phase, the router runs beside the dispatcher:
 
 A **rule target** is a PipeWire target backed by config matching rules rather
 than one current node ID. Rule targets resolve to live streams and re-resolve
-when streams die or reconnect.
+when streams die or reconnect. Resolution prefers an active match, remembers
+the bound PID, and on reconnect prefers the previous `media.name` before any
+other stream from that PID. This preserves the existing one-strip/one-tab
+behavior for browsers.
 
 A **concrete stream target** is a live PipeWire node target, usually selected by
 the TUI.
 
 A **solo group** is the set of assignments that should be mutually exclusive
-for solo behavior, such as playback streams of the same kind.
+for solo behavior, such as playback streams of the same kind. Backends publish
+the group on target metadata; the router owns the exclusive-within-group
+algorithm and applies mute through each assignment's mapped mute parameter.
+
+A router page owns every visible strip assignment on that page. MIDI and legacy
+bind/unbind/mute/solo IPC are forwarded to that owner, so a stream is never
+controlled by both the router and dispatcher. Switching back to a legacy page
+restores dispatcher ownership without residual routing state.
 
 The **crossfader** is a backend-owned composite parameter. It owns a PipeWire
 module graph and exposes a continuous `crossfade` parameter. The router must not
