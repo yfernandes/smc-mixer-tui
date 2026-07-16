@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"encoding/json"
 	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/backend/pwbackend"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
@@ -23,8 +25,7 @@ type Dispatcher interface {
 	ToggleSolo(ch int)
 	SetParam(target, param string, value float64, boolValue bool)
 	ToggleParam(target, param string)
-	RequestRouting()
-	RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string)
+	RequestBackendView(backendName, view string, data json.RawMessage)
 }
 
 // navSetting identifies which per-channel parameter is focused for MIDI navigation.
@@ -80,11 +81,11 @@ type Model struct {
 	cfgReloads      int        // incremented each time 'r' fires; shows in status bar
 	versionMismatch bool       // true when TUI and daemon were built from different commits
 
-	routingOpen         bool                   // routing inspector overlay is visible; toggled by Tab, independent of ActivePage
-	routing             daemon.RoutingSnapshot // last routing snapshot received from the daemon
-	routingCursor       int                    // index into retargetTargets(); which branch's output is selected
-	routingPickerOpen   bool                   // destination-sink picker is open, overlaid on the routing view
-	routingPickerCursor int                    // index into the picker's candidate sink list
+	routingOpen         bool                      // routing inspector overlay is visible; toggled by Tab, independent of ActivePage
+	routing             pwbackend.RoutingSnapshot // last routing snapshot received from the daemon
+	routingCursor       int                       // index into retargetTargets(); which branch's output is selected
+	routingPickerOpen   bool                      // destination-sink picker is open, overlaid on the routing view
+	routingPickerCursor int                       // index into the picker's candidate sink list
 }
 
 // retargetTarget identifies one retargetable branch: a crossfade route's "A"
@@ -221,7 +222,7 @@ func (m *Model) clampBindScroll() {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tickCmd(m.disp)
+	return tea.Batch(tea.HideCursor, tickCmd(m.disp))
 }
 
 func tickCmd(d Dispatcher) tea.Cmd {
@@ -241,6 +242,7 @@ func routingTickCmd() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	dbgMsg(msg)
 	switch msg := msg.(type) {
 	case snapshotMsg:
 		m.channels = [8]dispatcher.Channel(msg)
@@ -261,13 +263,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGlobal(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	case daemon.RoutingMsg:
-		m.routing = daemon.RoutingSnapshot(msg)
+	case daemon.BackendViewMsg:
+		if msg.Backend == pwbackend.Name && msg.View == "routing" {
+			if err := json.Unmarshal(msg.Data, &m.routing); err != nil {
+				return m, nil
+			}
+		}
 	case routingTickMsg:
 		if !m.routingOpen {
 			return m, nil
 		}
-		m.disp.RequestRouting()
+		m.disp.RequestBackendView(pwbackend.Name, "routing", nil)
 		return m, routingTickCmd()
 	}
 	return m, nil

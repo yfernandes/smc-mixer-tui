@@ -98,21 +98,27 @@ router:
   # has strips. Up/Down scroll the visible window while a router page is active.
   # The button must not collide with any legacy page button below.
   pages:
+    - name: applications
+      button: play
+      assignments:
+        - label: Spotify
+          target: "pipewire:rule/spotify"
+          params: {fader: volume, knob: crossfade, mute: mute, solo: solo, stop: playpause}
+        - label: YouTube Music
+          target: "pipewire:rule/youtube-music"
+          params: {fader: volume, knob: crossfade, mute: mute, solo: solo, stop: playpause}
+        - label: Firefox
+          target: "pipewire:rule/firefox"
+          params: {fader: volume, knob: crossfade, mute: mute, solo: solo, stop: playpause}
+        - label: Comms
+          target: "pipewire:rule/comms"
+          params: {fader: volume, knob: crossfade, mute: mute, solo: solo, stop: playpause}
     - name: lights
       button: seek-forward
       assignments:
         - target: "exec:brightness"
           params:
             fader: "value"
-    # To migrate a simple audio page, remove the legacy page using its button
-    # and add assignments like this. Rule names reference keys under devices;
-    # ad-hoc TUI binds replace them with pipewire:node/<id> targets.
-    # - name: playback
-    #   button: play
-    #   assignments:
-    #     - label: Spotify
-    #       target: "pipewire:rule/spotify"
-    #       params: {fader: volume, mute: mute, solo: solo, stop: playpause}
 
 pages:
   main:
@@ -135,18 +141,6 @@ pages:
       5: ~
       6: headphones
       7: speakers
-
-  applications:
-    button: play
-    channels:
-      0: spotify
-      1: youtube-music
-      2: firefox
-      3: comms
-      4: ~
-      5: ~
-      6: ~
-      7: ~
 
   inputs:
     button: rec

@@ -61,6 +61,7 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		die("invalid config: %v", err)
 	}
+	cfg.PromoteCrossfadePages()
 	if err := cfg.ValidateRouter(smc46.Descriptor().Strips); err != nil {
 		die("invalid router config: %v", err)
 	}
@@ -100,20 +101,19 @@ func main() {
 	applyBindings(ctx, cfg, disp, initial, pinned.snapshot(), pw.GetVolume)
 
 	execBackend := shellexec.New(cfg.Exec)
-	pwBackend := pwbackend.New(pw, enricher, cfg.Devices)
-	rt, err := router.NewFromConfigWithStrips(map[string]backend.Backend{
+	pwBackend := pwbackend.New(pw, enricher, cfg)
+	backends := map[string]backend.Backend{
 		execBackend.Name(): execBackend,
 		pwBackend.Name():   pwBackend,
-	}, cfg.Router, smc46.Descriptor().Strips)
+	}
+	defer pwBackend.Close(context.Background())
+	rt, err := router.NewFromConfigWithStrips(backends, cfg.Router, smc46.Descriptor().Strips)
 	if err != nil {
 		die("router config: %v", err)
 	}
 
-	manageCrossfaders := newCrossfaderManager(cfg, pw, disp)
-	defer manageCrossfaders.Close(context.Background())
-	manageCrossfaders.Sync(ctx, disp.Snapshot(), initial)
-
 	srv := daemon.NewServer(disp, configLabels(cfg), cfgPath, Version)
+	srv.Backends = backends
 	srv.RouterSet = rt.SetParam
 	srv.RouterToggle = rt.ToggleParam
 	srv.RouterOwnsStrip = rt.OwnsStrip
@@ -128,25 +128,6 @@ func main() {
 	})
 	rt.Activate(ctx)
 	srv.BroadcastStrips(routerStripsToWire(rt.Snapshot()), routerPageToWire(rt.PageInfo()))
-	srv.RoutingSnapshot = func(ctx context.Context) daemon.RoutingSnapshot {
-		return buildRoutingSnapshot(ctx, pw, disp, manageCrossfaders, cfg)
-	}
-	srv.RetargetOutput = func(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error {
-		return manageCrossfaders.RetargetOutput(ctx, deviceKey, branch, sinkNodeName, sinkDisplayName)
-	}
-	srv.AfterCmd = func(ctx context.Context) {
-		snap := disp.Snapshot()
-		// Fast synchronous path: update dispatcher knob attachment for any routing
-		// that already exists (e.g. stream moving between channels).
-		manageCrossfaders.Reattach(snap)
-		// Async path: create PipeWire routing for newly-bound streams if the cached
-		// stream list already knows about them. SetupCrossfader sleeps ~190 ms, so
-		// running it inline would stall every bind response.
-		go func() {
-			manageCrossfaders.SyncIfAble(ctx, disp.Snapshot())
-			srv.BroadcastSnapshot(disp.Snapshot())
-		}()
-	}
 	srv.BroadcastStreams(initial)
 
 	go func() {
@@ -168,12 +149,29 @@ func main() {
 		}
 	})
 
+	// Debug hook: SIGUSR1 injects a synthetic Play button press so a headless
+	// session (agent, CI, SSH) can toggle the applications page without the
+	// physical controller. See docs/DAEMON_AND_AUDIO.md "Debug instrumentation".
+	go func() {
+		usr1 := make(chan os.Signal, 1)
+		signal.Notify(usr1, syscall.SIGUSR1)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-usr1:
+				log.Printf("DEBUG: SIGUSR1 → synthetic Play press")
+				midiCh <- midi.GlobalMsg{Action: midi.ActionPlay, Pressed: true}
+			}
+		}
+	}()
+
 	go routeMIDI(ctx, midiCh, dispCh, srv, disp, rt)
 	go rt.Run(ctx)
 	go disp.Run(ctx, dispCh)
 	go runMIDIDeviceLoop(ctx, fixedDevice, srv, disp, rt, midiCh)
 	go runVolumePoller(ctx, pw, disp, srv)
-	go pollStreams(ctx, enricher, cfg, disp, srv, pinned, manageCrossfaders.Sync, rebindCh, pw.GetVolume)
+	go pollStreams(ctx, enricher, cfg, disp, srv, pinned, rebindCh, pw.GetVolume)
 
 	<-ctx.Done()
 }
@@ -344,19 +342,40 @@ func waitForMIDIDevice(ctx context.Context, fixedDevice string, srv *daemon.Serv
 }
 
 func runVolumePoller(ctx context.Context, pw *pipewire.Client, disp *dispatcher.Dispatcher, srv *daemon.Server) {
+	// SMC_POLLER_DEBUG=1 logs tick/broadcast counters every 2 s — the quickest
+	// way to tell whether snapshot-broadcast churn originates here (see
+	// docs/DAEMON_AND_AUDIO.md "Debug instrumentation").
+	debugEnabled := os.Getenv("SMC_POLLER_DEBUG") != ""
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	debugTicker := time.NewTicker(2 * time.Second)
+	defer debugTicker.Stop()
+	var ticks, broadcasts int
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			ticks++
 			if pollChannelVolumes(ctx, pw, disp) {
+				broadcasts++
 				srv.BroadcastSnapshot(disp.Snapshot())
 			}
+		case <-debugTicker.C:
+			if debugEnabled {
+				log.Printf("DEBUG volumePoller: %d ticks, %d broadcasts in last window", ticks, broadcasts)
+			}
+			ticks, broadcasts = 0, 0
 		}
 	}
 }
+
+// volumeEpsilon is the smallest PipeWire volume delta treated as a real
+// change. GetVolume readback has float rounding noise well below this on a
+// static stream; without a tolerance, pollChannelVolumes marked every 50ms
+// tick "changed" for any bound channel and BroadcastSnapshot fired at 20 Hz
+// even while nothing audible moved, which read as constant TUI blinking.
+const volumeEpsilon = 1.0 / 256.0
 
 func pollChannelVolumes(ctx context.Context, pw *pipewire.Client, disp *dispatcher.Dispatcher) bool {
 	snap := disp.Snapshot()
@@ -365,21 +384,30 @@ func pollChannelVolumes(ctx context.Context, pw *pipewire.Client, disp *dispatch
 		if c.StreamID != nil {
 			vol, _, err := pw.GetVolume(ctx, *c.StreamID)
 			if err == nil {
-				disp.UpdateActualVolume(ch, vol)
+				if math.Abs(vol-c.ActualVolume) > volumeEpsilon {
+					disp.UpdateActualVolume(ch, vol)
+					changed = true
+				}
 				if c.MPRISName != "" {
 					// Pass the stream ID so UpdatePlaybackStatus can verify the channel
 					// is still bound to the same stream (guards against stale-snapshot races
 					// where Unbind ran between Snapshot() and here).
-					disp.UpdatePlaybackStatusForStream(ch, *c.StreamID, streams.IsPlaying(ctx, c.MPRISName))
+					playing := streams.IsPlaying(ctx, c.MPRISName)
+					if playing != c.Stop {
+						disp.UpdatePlaybackStatusForStream(ch, *c.StreamID, playing)
+						changed = true
+					}
 				}
-				changed = true
 			}
 		}
 		if c.KnobStreamID != nil {
 			vol, _, err := pw.GetVolume(ctx, *c.KnobStreamID)
 			if err == nil {
-				disp.SetKnob(ch, int(math.Round(vol*127)))
-				changed = true
+				knob := int(math.Round(vol * 127))
+				if knob != c.Knob {
+					disp.SetKnob(ch, knob)
+					changed = true
+				}
 			}
 		}
 	}
@@ -393,7 +421,6 @@ func pollStreams(
 	disp *dispatcher.Dispatcher,
 	srv *daemon.Server,
 	pinned *pinnedState,
-	manageCrossfaders func(context.Context, [8]dispatcher.Channel, []streams.EnrichedStream),
 	rebindCh <-chan struct{},
 	getVol knobVolumeGetter,
 ) {
@@ -419,7 +446,6 @@ func pollStreams(
 				bindMu.Lock()
 				clearPageAssignments(disp)
 				applyBindings(ctx, cfg, disp, ss, pinned.snapshot(), getVol)
-				manageCrossfaders(ctx, disp.Snapshot(), ss)
 				srv.BroadcastSnapshot(disp.Snapshot())
 				bindMu.Unlock()
 			}
@@ -433,7 +459,6 @@ func pollStreams(
 		lastMu.Unlock()
 		bindMu.Lock()
 		applyBindings(ctx, cfg, disp, ss, pinned.snapshot(), getVol)
-		manageCrossfaders(ctx, disp.Snapshot(), ss)
 		srv.BroadcastStreams(ss)
 		srv.BroadcastSnapshot(disp.Snapshot())
 		bindMu.Unlock()

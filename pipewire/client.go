@@ -13,6 +13,7 @@ import (
 // Stream is an active PipeWire audio node (playback, capture, or hardware device).
 type Stream struct {
 	ID        uint32
+	Serial    uint32         // object.serial (stable metadata target while the object exists)
 	Name      string         // application.name → node.description → node.name → "stream-<id>"
 	NodeName  string         // node.name (stable PW/pactl-addressable name, e.g. alsa_output.pci-...)
 	MediaName string         // media.name (e.g. YouTube video title, track name)
@@ -161,10 +162,10 @@ func (c *Client) SetSinkVolume(ctx context.Context, sinkName string, vol float64
 // RouteStreamToSink routes a PipeWire stream node to a specific sink node via
 // WirePlumber metadata. Works with PipeWire-native streams that don't appear in
 // pactl sink-inputs. WirePlumber processes the change asynchronously.
-func (c *Client) RouteStreamToSink(ctx context.Context, streamNodeID, sinkNodeID uint32) error {
-	out, err := c.exec(ctx, "pw-metadata", idStr(streamNodeID), "target.object", idStr(sinkNodeID))
+func (c *Client) RouteStreamToSink(ctx context.Context, streamNodeID, sinkSerial uint32) error {
+	out, err := c.exec(ctx, "pw-metadata", idStr(streamNodeID), "target.object", idStr(sinkSerial), "Spa:Id")
 	if err != nil {
-		return fmt.Errorf("pw-metadata route %d→%d: %w\n%s", streamNodeID, sinkNodeID, err, out)
+		return fmt.Errorf("pw-metadata route %d→%d: %w\n%s", streamNodeID, sinkSerial, err, out)
 	}
 	return nil
 }
@@ -197,6 +198,19 @@ func (c *Client) findNodeIDByName(ctx context.Context, nodeName string) (uint32,
 		}
 	}
 	return 0, fmt.Errorf("node %q not found in pw-dump", nodeName)
+}
+
+func (c *Client) findNodeSerialByName(ctx context.Context, nodeName string) (uint32, error) {
+	ss, err := c.ListStreams(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, s := range ss {
+		if s.NodeName == nodeName && s.Serial != 0 {
+			return s.Serial, nil
+		}
+	}
+	return 0, fmt.Errorf("node %q has no object.serial in pw-dump", nodeName)
 }
 
 func clamp01(v float64) float64 {

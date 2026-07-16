@@ -62,6 +62,7 @@ func parseStreams(data []byte) ([]Stream, error) {
 		clientID := rawUint32(n.Info.Props["client.id"])
 		streams = append(streams, Stream{
 			ID:        n.ID,
+			Serial:    rawUint32(n.Info.Props["object.serial"]),
 			Name:      streamName(n, clientNames[clientID]),
 			NodeName:  rawStr(n.Info.Props["node.name"]),
 			MediaName: rawStr(n.Info.Props["media.name"]),

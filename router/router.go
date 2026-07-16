@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"os"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -299,7 +303,7 @@ func (r *Router) HandleEvent(ctx context.Context, ev surface.Event) bool {
 	if ev.Role == surface.RoleSolo && ev.Pressed {
 		return r.ToggleSolo(ctx, ev.Strip) == nil
 	}
-	a, param, spec, value, shouldSet := r.handleEventState(ev)
+	a, param, _, value, shouldSet := r.handleEventState(ev)
 	if param == "" {
 		return false
 	}
@@ -315,9 +319,7 @@ func (r *Router) HandleEvent(ctx context.Context, ev surface.Event) bool {
 		log.Printf("router: %v", err)
 		return true
 	}
-	if spec.Kind == backend.ParamToggle {
-		r.notify()
-	}
+	r.notify()
 	return true
 }
 
@@ -630,6 +632,9 @@ func (r *Router) setRemote(strip int, param string, v backend.Value) bool {
 	}
 	pr.lastValue = v
 	pr.remoteKnown = true
+	if assignment, ok := r.assignments[strip]; ok && assignment.Params[surface.RoleKnob] == param {
+		r.knobs[strip] = clampInt(int(math.Round(clamp01(v.F)*127)), 0, 127)
+	}
 	if !pr.synced {
 		pr.pickupSide = 0
 	}
@@ -647,6 +652,9 @@ func (r *Router) updateRemote(target backend.TargetID, param string, v backend.V
 		pr.lastValue = v
 		pr.remoteKnown = true
 		pr.synced = true
+		if a.Params[surface.RoleKnob] == param {
+			r.knobs[strip] = clampInt(int(math.Round(clamp01(v.F)*127)), 0, 127)
+		}
 	}
 }
 
@@ -664,6 +672,15 @@ func (r *Router) cachedValue(target backend.TargetID, param string) (backend.Val
 }
 
 func (r *Router) notify() {
+	// SMC_ROUTER_DEBUG=1 logs every notify with its caller so strip-broadcast
+	// churn can be attributed (see docs/DAEMON_AND_AUDIO.md "Debug
+	// instrumentation"). Inert otherwise.
+	if os.Getenv("SMC_ROUTER_DEBUG") != "" {
+		if pc, _, line, ok := runtime.Caller(1); ok {
+			fn := runtime.FuncForPC(pc)
+			log.Printf("DEBUG router.notify from %s:%d", fn.Name(), line)
+		}
+	}
 	r.mu.Lock()
 	snap := r.snapshotLocked()
 	cb := r.onChange
@@ -708,7 +725,14 @@ func (r *Router) snapshotLocked() []StripState {
 		st := r.stateForLocked(strip)
 		params := make(map[string]ParamState, len(a.Params))
 		for _, param := range a.Params {
-			spec := st.specFor(param)
+			// Only publish params the backend actually declared. Assignment
+			// params without a spec (e.g. "solo" on a backend that has no such
+			// param) would otherwise leak out with the zero ParamKind —
+			// ParamContinuous — and masquerade as a second fader.
+			spec, ok := st.specs[param]
+			if !ok {
+				continue
+			}
 			pr := st.paramFor(param)
 			params[param] = ParamState{
 				Kind:     spec.Kind,
@@ -730,6 +754,7 @@ func (r *Router) snapshotLocked() []StripState {
 			Ext:      append(json.RawMessage(nil), st.ext...),
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Strip < out[j].Strip })
 	return out
 }
 

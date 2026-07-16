@@ -9,10 +9,26 @@ import (
 
 func resolveRule(rule *ruleState, ss []streams.EnrichedStream) *streams.EnrichedStream {
 	if rule.current != nil {
+		var stuck *streams.EnrichedStream
 		for i := range ss {
 			if ss[i].ID == rule.current.ID {
-				return &ss[i]
+				stuck = &ss[i]
+				break
 			}
+		}
+		if stuck != nil {
+			if stuck.Active {
+				return stuck
+			}
+			// The previously-bound node is still present but has gone idle
+			// (e.g. a backgrounded browser tab). Don't stay stuck on it if a
+			// different matching stream is now the one actually producing audio.
+			for i := range ss {
+				if ss[i].ID != stuck.ID && ss[i].Active && matches(rule, ss[i]) {
+					return &ss[i]
+				}
+			}
+			return stuck
 		}
 	}
 	if rule.boundPID != 0 {

@@ -417,6 +417,7 @@ func TestSetupCrossfaderLoadsModulesAndMovesStream(t *testing.T) {
 	rec := &recordingExec{
 		loadIDs:    []uint32{101, 102, 103, 104, 105, 106, 107},
 		sinkInputs: sinkInputFixture(77, 555, "firefox.node"),
+		pwDump:     crossfaderPWDumpFixture("smc_ch0_void", 93),
 	}
 
 	routing, err := rec.client().SetupCrossfader(context.Background(), "ch0", 555, "firefox.node", "sink_a", "sink_b")
@@ -436,11 +437,31 @@ func TestSetupCrossfaderLoadsModulesAndMovesStream(t *testing.T) {
 	if !commandsContain(rec.commands, "pactl move-sink-input 77 smc_ch0_void") {
 		t.Fatalf("expected stream move to null sink, commands=%v", rec.commands)
 	}
-	if commandsContainPrefix(rec.commands, "pw-metadata") {
-		t.Fatalf("setup must not call pw-metadata (WirePlumber race), commands=%v", rec.commands)
+	if !commandsContain(rec.commands, "pw-metadata 555 target.object 1093 Spa:Id") {
+		t.Fatalf("setup must pin target.object with the sink serial, commands=%v", rec.commands)
 	}
 	if len(rec.unloaded) != 0 {
 		t.Fatalf("successful setup should not unload modules, got %v", rec.unloaded)
+	}
+}
+
+func TestAttachCrossfaderStreamMovesReplacementWithoutRebuilding(t *testing.T) {
+	rec := &recordingExec{sinkInputs: sinkInputFixture(88, 666, "firefox.replacement"), pwDump: crossfaderPWDumpFixture("smc_firefox_void", 93)}
+	routing := &CrossfaderRouting{NullSinkName: "smc_firefox_void", StreamSI: 77, StreamNodeID: 555}
+	if err := rec.client().AttachCrossfaderStream(context.Background(), routing, 666, "firefox.replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if routing.StreamSI != 88 || routing.StreamNodeID != 666 {
+		t.Fatalf("replacement metadata = %+v", routing)
+	}
+	if !commandsContain(rec.commands, "pactl move-sink-input 88 smc_firefox_void") {
+		t.Fatalf("replacement was not moved to stable void: %v", rec.commands)
+	}
+	if !commandsContain(rec.commands, "pw-metadata 666 target.object 1093 Spa:Id") {
+		t.Fatalf("replacement must pin target.object with the sink serial: %v", rec.commands)
+	}
+	if commandsContainPrefix(rec.commands, "pactl load-module") || commandsContainPrefix(rec.commands, "pactl unload-module") {
+		t.Fatalf("replacement attach rebuilt modules: %v", rec.commands)
 	}
 }
 
@@ -449,6 +470,7 @@ func TestSetupCrossfaderCleansUpStaleModulesForTag(t *testing.T) {
 		loadIDs:    []uint32{101, 102, 103, 104, 105, 106, 107},
 		modules:    pulseModuleFixture(),
 		sinkInputs: sinkInputFixture(77, 555, "firefox.node"),
+		pwDump:     crossfaderPWDumpFixture("smc_ch0_void", 93),
 	}
 
 	_, err := rec.client().SetupCrossfader(context.Background(), "ch0", 555, "firefox.node", "sink_a", "sink_b")
@@ -505,6 +527,7 @@ func TestSetupCrossfaderRollsBackLoadedModulesWhenStreamMoveFails(t *testing.T) 
 	rec := &recordingExec{
 		loadIDs:     []uint32{101, 102, 103, 104, 105, 106, 107},
 		sinkInputs:  sinkInputFixture(77, 555, "firefox.node"),
+		pwDump:      crossfaderPWDumpFixture("smc_ch0_void", 93),
 		moveSinkErr: true,
 	}
 
@@ -601,9 +624,10 @@ func crossfaderPWDumpFixture(nullName string, nullID uint32) string {
 	return fmt.Sprintf(`[
 		{"id": %d, "type": "PipeWire:Interface:Node", "info": {"props": {
 			"media.class": "Audio/Sink",
-			"node.name": "%s"
+			"node.name": "%s",
+			"object.serial": %d
 		}}}
-	]`, nullID, nullName)
+	]`, nullID, nullName, nullID+1000)
 }
 
 func parseTestID(s string) (uint32, error) {
@@ -628,6 +652,15 @@ func commandsContainPrefix(commands []string, prefix string) bool {
 		}
 	}
 	return false
+}
+
+func commandIndex(commands []string, want string) int {
+	for i, command := range commands {
+		if command == want {
+			return i
+		}
+	}
+	return -1
 }
 
 func sameUint32s(got, want []uint32) bool {

@@ -134,6 +134,11 @@ The **crossfader** is a backend-owned composite parameter. It owns a PipeWire
 module graph and exposes a continuous `crossfade` parameter. The router must not
 learn about null sinks, loopbacks, or sink names.
 
+A **backend view** is an opaque request/response routed by backend name and view
+name over generic IPC. The PipeWire backend serves `routing` snapshots and
+`retarget` commands this way; the daemon protocol does not define audio routing
+payloads, while the compiled-in PipeWire TUI view decodes the backend-owned JSON.
+
 ## References
 
 - `tasks/issues/router-refactor/00-overview.md`

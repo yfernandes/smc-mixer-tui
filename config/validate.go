@@ -170,9 +170,6 @@ func (c *Config) ValidateRouter(strips int) error {
 			if err := c.validateRouterAssignment(fmt.Sprintf("router page %q assignment %d", page.Name, j), assignment); err != nil {
 				return err
 			}
-			if strings.HasPrefix(assignment.Target, "pipewire:rule/") {
-				routerRules[strings.TrimPrefix(assignment.Target, "pipewire:rule/")] = page.Name
-			}
 		}
 	}
 	for pageName, page := range c.Pages {

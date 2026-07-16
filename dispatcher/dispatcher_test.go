@@ -596,70 +596,6 @@ func TestStopAfterUnbindDoesNotCallStaleMPRIS(t *testing.T) {
 	}
 }
 
-// — crossfader tests —
-
-// fakeCrossfader records SetGains calls for testing.
-type fakeCrossfader struct {
-	lastVolA, lastVolB float64
-	calls              int
-}
-
-func (f *fakeCrossfader) SetGains(_ context.Context, volA, volB float64) error {
-	f.lastVolA = volA
-	f.lastVolB = volB
-	f.calls++
-	return nil
-}
-
-func TestCrossfaderKnobHardLeft(t *testing.T) {
-	d := New(newFakePW())
-	ctrl := &fakeCrossfader{}
-	d.SetCrossfader(0, ctrl, "Speakers", "Headphones")
-
-	// Knob to 0 → volA=1.0, volB=0.0
-	for range 64 {
-		send(d, midi.KnobMsg{Channel: 0, Delta: -1})
-	}
-	if !approxEq(ctrl.lastVolA, 1.0) {
-		t.Fatalf("volA = %.4f, want 1.0 at knob=0", ctrl.lastVolA)
-	}
-	if !approxEq(ctrl.lastVolB, 0.0) {
-		t.Fatalf("volB = %.4f, want 0.0 at knob=0", ctrl.lastVolB)
-	}
-}
-
-func TestCrossfaderKnobHardRight(t *testing.T) {
-	d := New(newFakePW())
-	ctrl := &fakeCrossfader{}
-	d.SetCrossfader(0, ctrl, "Speakers", "Headphones")
-
-	// Knob to 127 → volA=0.0, volB=1.0
-	for range 64 {
-		send(d, midi.KnobMsg{Channel: 0, Delta: +1})
-	}
-	if !approxEq(ctrl.lastVolA, 0.0) {
-		t.Fatalf("volA = %.4f, want 0.0 at knob=127", ctrl.lastVolA)
-	}
-	if !approxEq(ctrl.lastVolB, 1.0) {
-		t.Fatalf("volB = %.4f, want 1.0 at knob=127", ctrl.lastVolB)
-	}
-}
-
-func TestCrossfaderKnobCenterBothFull(t *testing.T) {
-	d := New(newFakePW())
-	ctrl := &fakeCrossfader{}
-	d.SetCrossfader(0, ctrl, "Speakers", "Headphones")
-
-	// Knob stays at center (64) → both ≈1.0
-	send(d, midi.KnobMsg{Channel: 0, Delta: 0})
-	if ctrl.lastVolA < 0.98 {
-		t.Fatalf("volA = %.4f at center, want ≈1.0", ctrl.lastVolA)
-	}
-	if ctrl.lastVolB < 0.98 {
-		t.Fatalf("volB = %.4f at center, want ≈1.0", ctrl.lastVolB)
-	}
-}
-
 func TestKnobGainCallsSetVolume(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
@@ -686,47 +622,14 @@ func TestKnobGainLoseKnobStopsWrites(t *testing.T) {
 	}
 }
 
-func TestKnobGainDoesNotTouchCrossfaderWhenBothSet(t *testing.T) {
-	pw := newFakePW()
-	d := New(pw)
-	ctrl := &fakeCrossfader{}
-	d.SetCrossfader(0, ctrl, "A", "B")
-	d.BindKnob(0, 55) // crossfader takes priority
-
-	send(d, midi.KnobMsg{Channel: 0, Delta: +1})
-	if _, called := pw.volumes[55]; called {
-		t.Fatal("crossfader must take priority over knob gain; SetVolume must not be called")
-	}
-	if ctrl.calls == 0 {
-		t.Fatal("crossfader SetGains should have been called")
-	}
-}
-
-func TestCrossfaderNoCallWithoutController(t *testing.T) {
+func TestKnobWithoutBindingDoesNotWrite(t *testing.T) {
 	pw := newFakePW()
 	d := New(pw)
 
 	// No crossfader and no knob binding — knob must not call SetVolume on PipeWire.
 	send(d, midi.KnobMsg{Channel: 0, Delta: +10})
 	if len(pw.volumes) != 0 {
-		t.Fatal("knob without crossfader controller or knob binding must not call SetVolume")
-	}
-}
-
-func TestCrossfaderNoGlobalSinkTouch(t *testing.T) {
-	pw := newFakePW()
-	d := New(pw)
-	ctrl := &fakeCrossfader{}
-	d.SetCrossfader(0, ctrl, "Speakers", "Headphones")
-
-	send(d, midi.KnobMsg{Channel: 0, Delta: +10})
-
-	// The fake PipeWire must NOT receive any SetVolume calls — gains go via ctrl.
-	if len(pw.volumes) != 0 {
-		t.Fatal("crossfader must not touch global sink volumes via SetVolume")
-	}
-	if ctrl.calls == 0 {
-		t.Fatal("crossfader controller SetGains was not called")
+		t.Fatal("knob without a binding must not call SetVolume")
 	}
 }
 

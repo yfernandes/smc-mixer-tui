@@ -2,11 +2,26 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/backend"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 )
+
+type viewBackend struct{ request json.RawMessage }
+
+func (b *viewBackend) Name() string                                                       { return "view" }
+func (b *viewBackend) Targets(context.Context) ([]backend.TargetInfo, error)              { return nil, nil }
+func (b *viewBackend) Set(context.Context, backend.TargetID, string, backend.Value) error { return nil }
+func (b *viewBackend) Get(context.Context, backend.TargetID, string) (backend.Value, bool, error) {
+	return backend.Value{}, false, nil
+}
+func (b *viewBackend) View(_ context.Context, view string, request json.RawMessage) (json.RawMessage, error) {
+	b.request = append([]byte(nil), request...)
+	return json.Marshal(map[string]string{"view": view})
+}
 
 type daemonFakePW struct{}
 
@@ -103,6 +118,25 @@ func TestHandleCmdForwardsLegacyCommandsForRouterOwnedStrip(t *testing.T) {
 	}
 	if disp.Snapshot()[2].StreamID != nil {
 		t.Fatal("router-owned bind reached dispatcher")
+	}
+}
+
+func TestBackendViewRoundTrip(t *testing.T) {
+	disp := dispatcher.New(daemonFakePW{})
+	viewer := &viewBackend{}
+	srv := NewServer(disp, [8]string{}, "", "")
+	srv.Backends = map[string]backend.Backend{"view": viewer}
+	request, _ := json.Marshal(BackendViewPayload{Backend: "view", View: "routing", Data: json.RawMessage(`{"selected":1}`)})
+	response, err := srv.handleBackendView(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Backend != "view" || response.View != "routing" || string(viewer.request) != `{"selected":1}` {
+		t.Fatalf("response/request = %+v / %s", response, viewer.request)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(response.Data, &decoded); err != nil || decoded["view"] != "routing" {
+		t.Fatalf("response data = %s, err=%v", response.Data, err)
 	}
 }
 

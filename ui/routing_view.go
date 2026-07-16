@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/yfernandes/smc-mixer-tui/daemon"
+	"github.com/yfernandes/smc-mixer-tui/backend/pwbackend"
 )
 
 var (
@@ -163,7 +163,7 @@ func (m Model) renderRetargetPicker() string {
 	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, rows...)...)
 }
 
-func renderStep(s daemon.RouteStep) string {
+func renderStep(s pwbackend.RouteStep) string {
 	name := truncateName(s.NodeName)
 	if name == "" {
 		name = "(none)"

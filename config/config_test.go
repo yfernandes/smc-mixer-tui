@@ -452,13 +452,42 @@ func TestValidateRejectsPipeWireRuleOwnedByBothWorlds(t *testing.T) {
 	cfg := &Config{
 		Devices: map[string]DeviceConfig{"music": {Type: BindPlayback, Match: "spotify"}},
 		Pages:   map[string]PageConfig{"legacy": {Channels: map[int]*string{0: &music}}},
-		Router: RouterConfig{Pages: []RouterPageConfig{{
-			Name: "audio", Button: "play",
-			Assignments: []AssignmentConfig{{Target: "pipewire:rule/music", Params: map[string]string{"fader": "volume"}}},
-		}}},
+		Router: RouterConfig{Assignments: map[int]AssignmentConfig{
+			0: {Target: "pipewire:rule/music", Params: map[string]string{"fader": "volume"}},
+		}},
 	}
 	if err := cfg.ValidateRouter(8); err == nil || !strings.Contains(err.Error(), "controlled by router page") {
 		t.Fatalf("ValidateRouter error = %v, want double-control rejection", err)
+	}
+}
+
+func TestPromoteCrossfadePagesToRouter(t *testing.T) {
+	music := "music"
+	cfg := &Config{
+		Defaults: DefaultsConfig{PlaybackKnob: KnobConfig{Type: KnobSend, BusA: "speakers", BusB: "headphones"}},
+		Devices: map[string]DeviceConfig{
+			"music":    {Label: "Music", Type: BindPlayback},
+			"speakers": {Type: BindOutput}, "headphones": {Type: BindOutput},
+		},
+		Pages: map[string]PageConfig{"applications": {Button: "play", Channels: map[int]*string{0: &music}}},
+	}
+	cfg.PromoteCrossfadePages()
+	if _, ok := cfg.Pages["applications"]; ok {
+		t.Fatal("legacy crossfade page was not removed from runtime pages")
+	}
+	if len(cfg.Router.Pages) != 1 || cfg.Router.Pages[0].Assignments[0].Params["knob"] != "crossfade" {
+		t.Fatalf("promoted router page = %+v", cfg.Router.Pages)
+	}
+}
+
+func TestExampleConfigPromotesAndValidates(t *testing.T) {
+	cfg, err := Load("../config-example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PromoteCrossfadePages()
+	if err := cfg.ValidateRouter(8); err != nil {
+		t.Fatalf("promoted example config: %v", err)
 	}
 }
 

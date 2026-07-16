@@ -36,6 +36,28 @@ type CrossfaderRouting struct {
 	StreamNodeID   uint32 // PipeWire stream node ID; used to mute/unmute around routing changes
 }
 
+// CrossfaderHealthy reports whether the three device-owned sink nodes still
+// exist. PipeWire or WirePlumber restarts destroy module-backed nodes without
+// notifying the daemon, so module IDs alone cannot establish graph health.
+func (c *Client) CrossfaderHealthy(ctx context.Context, r *CrossfaderRouting) (bool, error) {
+	ss, err := c.ListStreams(ctx)
+	if err != nil {
+		return false, err
+	}
+	want := map[string]bool{r.NullSinkName: false, r.GainAName: false, r.GainBName: false}
+	for _, s := range ss {
+		if _, ok := want[s.NodeName]; ok {
+			want[s.NodeName] = true
+		}
+	}
+	for _, found := range want {
+		if !found {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // SetupCrossfader creates a null-sink, two gain-stage null sinks, and four loopbacks
 // to independently route the stream to sinkANodeName and sinkBNodeName.
 //
@@ -98,6 +120,10 @@ func (c *Client) setupCrossfaderInner(ctx context.Context, tag string, streamNod
 		plan.unloadLoaded(ctx, c)
 		return nil, fmt.Errorf("find stream SI: %w", err)
 	}
+	if err := c.pinCrossfaderStream(ctx, streamNodeID, plan.names.null); err != nil {
+		plan.unloadLoaded(ctx, c)
+		return nil, err
+	}
 
 	if err := c.MoveSinkInput(ctx, streamSI, plan.names.null); err != nil {
 		plan.unloadLoaded(ctx, c)
@@ -105,6 +131,57 @@ func (c *Client) setupCrossfaderInner(ctx context.Context, tag string, streamNod
 	}
 
 	return plan.routing(streamSI), nil
+}
+
+// AttachCrossfaderStream moves a replacement stream into an existing stable
+// crossfader graph without rebuilding its modules. It mirrors setup's
+// find-before-move race handling and updates teardown/retarget metadata only
+// after the move succeeds.
+func (c *Client) AttachCrossfaderStream(ctx context.Context, routing *CrossfaderRouting, streamNodeID uint32, streamNodeName string) error {
+	if streamNodeID != 0 {
+		_ = c.SetMute(ctx, streamNodeID, true)
+		time.Sleep(40 * time.Millisecond)
+	}
+	streamSI, err := c.findSinkInput(ctx, streamNodeID, streamNodeName)
+	if err != nil {
+		if streamNodeID != 0 {
+			_ = c.SetMute(ctx, streamNodeID, false)
+		}
+		return fmt.Errorf("find replacement stream SI: %w", err)
+	}
+	if err := c.pinCrossfaderStream(ctx, streamNodeID, routing.NullSinkName); err != nil {
+		if streamNodeID != 0 {
+			_ = c.SetMute(ctx, streamNodeID, false)
+		}
+		return err
+	}
+	if err := c.MoveSinkInput(ctx, streamSI, routing.NullSinkName); err != nil {
+		if streamNodeID != 0 {
+			_ = c.SetMute(ctx, streamNodeID, false)
+		}
+		return fmt.Errorf("move replacement stream to null sink: %w", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if streamNodeID != 0 {
+		_ = c.SetMute(ctx, streamNodeID, false)
+	}
+	routing.StreamNodeID = streamNodeID
+	routing.StreamSI = streamSI
+	return nil
+}
+
+func (c *Client) pinCrossfaderStream(ctx context.Context, streamNodeID uint32, nullSinkName string) error {
+	if streamNodeID == 0 {
+		return nil
+	}
+	serial, err := c.findNodeSerialByName(ctx, nullSinkName)
+	if err != nil {
+		return fmt.Errorf("find null sink %s serial: %w", nullSinkName, err)
+	}
+	if err := c.RouteStreamToSink(ctx, streamNodeID, serial); err != nil {
+		return fmt.Errorf("pin stream to null sink: %w", err)
+	}
+	return nil
 }
 
 // RetargetCrossfaderOutput repoints a crossfade branch's final hop (a

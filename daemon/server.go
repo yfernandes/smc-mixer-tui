@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -35,17 +36,11 @@ type Server struct {
 	currentPage   PageWire
 
 	// AfterCmd is called after each bind/unbind command is applied to the
-	// dispatcher, before BroadcastSnapshot. Use it to update any state that
-	// depends on the current channel snapshot (e.g. crossfader attachment).
+	// dispatcher, before BroadcastSnapshot.
 	AfterCmd func(ctx context.Context)
 
-	// RoutingSnapshot builds the routing inspector payload on demand. Nil until
-	// set by main; requests are ignored until then.
-	RoutingSnapshot func(ctx context.Context) RoutingSnapshot
-
-	// RetargetOutput repoints a crossfade branch's output sink. Nil until set
-	// by main; requests are ignored until then.
-	RetargetOutput func(ctx context.Context, deviceKey, branch, sinkNodeName, sinkDisplayName string) error
+	// Backends exposes optional backend.Viewer implementations to generic IPC.
+	Backends map[string]backend.Backend
 
 	// RouterSet and RouterToggle handle generic strip commands.
 	RouterSet       func(ctx context.Context, target, param string, value backend.Value) error
@@ -201,27 +196,33 @@ func (s *Server) serveConn(ctx context.Context, sc *serverConn) {
 			log.Printf("daemon: client decode: %v", err)
 			continue
 		}
-		if env.Kind == kindRoutingRequest {
-			if s.RoutingSnapshot != nil {
-				sc.writeMsg(kindRouting, s.RoutingSnapshot(ctx))
-			}
-			continue
-		}
-		if env.Kind == kindRetarget {
-			var p retargetPayload
-			if err := json.Unmarshal(env.Data, &p); err != nil {
-				log.Printf("daemon: retarget decode: %v", err)
+		if env.Kind == kindBackendViewReq {
+			response, err := s.handleBackendView(ctx, env.Data)
+			if err != nil {
+				log.Printf("daemon: backend view: %v", err)
 				continue
 			}
-			if s.RetargetOutput != nil {
-				if err := s.RetargetOutput(ctx, p.DeviceKey, p.Branch, p.SinkNodeName, p.SinkDisplayName); err != nil {
-					log.Printf("daemon: retarget %s/%s -> %s: %v", p.DeviceKey, p.Branch, p.SinkNodeName, err)
-				}
-			}
+			sc.writeMsg(kindBackendViewResp, response)
 			continue
 		}
 		s.handleCmd(ctx, env)
 	}
+}
+
+func (s *Server) handleBackendView(ctx context.Context, raw json.RawMessage) (BackendViewPayload, error) {
+	var request BackendViewPayload
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return BackendViewPayload{}, err
+	}
+	viewer, ok := s.Backends[request.Backend].(backend.Viewer)
+	if !ok {
+		return BackendViewPayload{}, fmt.Errorf("backend %q has no view provider", request.Backend)
+	}
+	data, err := viewer.View(ctx, request.View, request.Data)
+	if err != nil {
+		return BackendViewPayload{}, fmt.Errorf("%s/%s: %w", request.Backend, request.View, err)
+	}
+	return BackendViewPayload{Backend: request.Backend, View: request.View, Data: data}, nil
 }
 
 func (s *Server) handleCmd(ctx context.Context, env envelope) {

@@ -48,7 +48,7 @@ pgrep -c smc-mixerd
 ## The crossfader signal chain
 
 When a channel's knob is `type: send` (a crossfade between two output buses), the daemon
-builds this PipeWire graph per app (`pipewire/crossfader.go`, `cmd/smc-mixerd/crossfaders.go`).
+builds this PipeWire graph per app (`pipewire/crossfader.go`, `backend/pwbackend/crossfader.go`).
 `<tag>` is the device key from `config.yaml` (e.g. `firefox`):
 
 ```
@@ -93,7 +93,8 @@ Key facts learned the hard way:
 - The correct key is **`stream.rules`**, not `node.rules`. WP 0.5 applies it via
   `scripts/node/state-stream.lua` (the **restore-stream** hook).
 - WirePlumber's own **restore-stream** is the "outside influence" — it remembers/restores a
-  stream's last target. It is not caelestia or the GPU. (caelestia only sets
+  stream's last target. The daemon therefore pins live `target.object` metadata before its
+  explicit move as well as using the creation-time drop-in. It is not caelestia or the GPU. (caelestia only sets
   `preferredDefaultAudioSink`; it never moves individual streams.)
 - Match on `application.process.binary` (stable across tabs), not the enriched name. The daemon
   matches apps by MPRIS-enriched identity (`firefox.*`); WirePlumber only sees the raw
@@ -108,9 +109,9 @@ Key facts learned the hard way:
 |---|---|---|
 | Controller totally unresponsive; erratic | **[Daemon stacking](#1-daemon-stacking)** — 2+ `smc-mixerd` fighting over MIDI | `pgrep -c smc-mixerd` must be `1`. `systemctl --user restart smc-mixer.service`. Singleton lock now prevents new stacks. |
 | Fader moves but app volume doesn't change; audio plays fine | Bound stream is **not in the void** (create→move race), or it's a **different tab** than the audible one | Install the [WP drop-in](#wireplumber-integration--the-createmove-race). Confirm: `pw-link -l \| grep 'Zen:output'` should point at `smc_<tag>_void`, not the hardware sink. |
-| Crossfade knob does nothing | Wrong page (no `send` knob), **or** crossfader [churn](#4-crossfader-churn), **or** stacked daemons | Use the `applications` page. Check logs for `crossfader … tearing down`. `pgrep -c smc-mixerd == 1`. |
-| Crossfader worked, then stopped after a stream/tab change | **[Crossfader churn](#4-crossfader-churn)** — routing keyed to an ephemeral stream ID | Currently self-heals on rebind; see [open issues](#open-issues--planned-work). |
-| Audio routes to wrong device after a WirePlumber update/restart | **[WP restart scrambled loopbacks](#5-wireplumber-restart-scrambles-the-chain)** | Restart the daemon to rebuild (`systemctl --user restart smc-mixer.service`). Loopbacks are now pinned; prefer relogin over WP restart. |
+| Crossfade knob does nothing | Wrong page (no router `knob: crossfade` mapping), missing WirePlumber rule, or stacked daemons | Use the promoted/router `applications` page, confirm the stream targets `smc_<tag>_void`, and check `pgrep -c smc-mixerd == 1`. |
+| Crossfader worked, then stopped after a stream/tab change | Replacement stream did not attach to the stable void sink | Check for `attach replacement stream` errors. The backend reattaches resolved replacements without rebuilding the graph; the WirePlumber drop-in still prevents the initial creation race. |
+| Audio routes to wrong device after a WirePlumber update/restart | **[WP restart destroyed or scrambled the graph](#5-wireplumber-restart-scrambles-the-chain)** | Wait for the daemon's next reconciliation; it detects missing graph sinks and rebuilds automatically. If recovery still fails, restart `smc-mixer.service`. |
 | Only one browser tab responds to the fader | **[Multi-tab binding](#3-multi-tab-per-stream-binding)** — fader controls one stream node | Bind the specific stream in the TUI, or keep one audio tab. Per-app grouping is planned. |
 
 ### 1. Daemon stacking
@@ -134,20 +135,21 @@ identity (browsers expose one global MPRIS player + one PID). The fader binds to
 node, so only that tab responds. See `[[project_multitab_binding]]` in agent memory. Intended
 behavior for now (one fader ↔ one stream); an "application group" feature is planned.
 
-### 4. Crossfader churn
+### 4. Crossfader graph ownership
 
-`crossfaderManager.Sync` keys each routing to a specific `streamID`. When that stream vanishes
-(tab closed, new video → new stream ID), Pass 1 logs `stream N not in ss, tearing down` and
-rebuilds the whole crossfader around the new stream — recreating modules and flapping the knob
-attachment. It self-heals but is disruptive. The routing should instead be anchored to the
-**device + void sink**, independent of any single stream. See [open issues](#open-issues--planned-work).
+`backend/pwbackend` keys each routing to the configured device/rule and its stable
+`smc_<tag>_void` sink. A temporary resolution gap keeps the graph alive; when a replacement
+stream resolves, the backend moves it into that existing void sink without tearing down and
+recreating the seven modules. WirePlumber still attaches newly created streams at creation time
+to eliminate the polling window before backend reconciliation.
 
 ### 5. WirePlumber restart scrambles the chain
 
-Restarting WirePlumber re-links every node. The crossfader loopbacks are now created with
-`sink.dont.move=true source.dont.move=true`, so they survive. If you still see mis-routing after
-a WP restart/update, restart the daemon to rebuild from scratch. In normal boot order WP starts
-before the daemon, so this only bites on mid-session WP restarts — prefer a fresh login.
+Restarting WirePlumber re-links every node and can destroy the module-backed void/gain sinks
+while the daemon remains alive. The backend checks all three device-owned sinks during each
+reconciliation; if they disappeared, it discards the stale module IDs and rebuilds the graph.
+If automatic recovery still fails, restart the daemon. In normal boot order WP starts before
+the daemon, so this mostly matters for mid-session WP restarts — prefer a fresh login.
 
 ---
 
@@ -169,16 +171,91 @@ pw-dump | python3 -c 'import json,sys;[print(o["id"],(o.get("info") or {}).get("
 # Crossfader gain volumes (what the knob drives)
 wpctl status | grep -iE 'smc_.*gain'
 
-# Daemon's view of channels (bindings, crossfader attach, sync)
+# Daemon's view of backend-owned crossfader lifecycle
 journalctl --user -u smc-mixer.service | grep -i crossfader | tail
 ```
 
 ---
 
+## Debug instrumentation
+
+Built-in, env-gated hooks — all inert by default, safe to leave enabled in a
+dev session. They exist because "the TUI blinks" class of bugs cannot be
+diagnosed from either side alone: you need to know *what arrived* (daemon
+side) and *what actually re-rendered* (client side) at the same time.
+
+| Hook | Where | What it does |
+|---|---|---|
+| `SMC_TUI_DEBUG=<file>` | `smc-mixer` (client) | Logs every non-tick `Update` msg type and a line-level diff of each frame whose rendered content changed (`ui/debug_instrument.go`). An idle TUI should log ~zero `FRAME CHANGED` lines. |
+| `SMC_ROUTER_DEBUG=1` | `smc-mixerd` | Logs every `router.notify()` with its caller — attributes strip-broadcast (`kindStrips`) churn to the code path that caused it. |
+| `SMC_POLLER_DEBUG=1` | `smc-mixerd` | Logs volume-poller tick/broadcast counters every 2 s — attributes snapshot-broadcast (`kindSnapshot`) churn. |
+| `kill -USR1 <daemon pid>` | `smc-mixerd` | Injects a synthetic Play button press (toggles the applications page) so a headless session can exercise router pages without the physical controller. |
+
+### Headless repro playbook
+
+How the 2026-07 applications-page blinking was isolated; reusable for any
+"UI misbehaves, cause unknown" bug without touching the hardware:
+
+```bash
+# 1. Daemon with tracing, logs to a stable path
+SMC_ROUTER_DEBUG=1 SMC_POLLER_DEBUG=1 nohup ~/.local/bin/smc-mixerd \
+  > ~/.cache/smc-mixer/smc-mixerd.log 2>&1 & disown
+
+# 2. Flip to the applications page without the controller
+kill -USR1 "$(pgrep smc-mixerd)"
+
+# 3. Run the TUI in a pty for 30 s, capturing frame diffs
+SMC_TUI_DEBUG=/tmp/tui-debug.log timeout 30 script -qec smc-mixer /dev/null
+grep -c "FRAME CHANGED" /tmp/tui-debug.log   # idle: expect 1 (initial paint)
+
+# 4. Inspect what the daemon actually sends (initial state, one JSON frame)
+python3 -c "
+import socket,json
+s=socket.socket(socket.AF_UNIX); s.connect('/run/user/1000/smc-mixer.sock')
+buf=b''
+while b'\n' not in buf: buf+=s.recv(65536)
+env=json.loads(buf.split(b'\n')[0])
+for st in env['data'].get('strips',[]):
+    print(st['strip'], st.get('target_id'), json.dumps(st.get('params')))
+"
+```
+
+Reading the results: `FRAME CHANGED` lines with **no** corresponding client
+`update:` lines (other than the 50 ms tick) mean the render itself is
+nondeterministic — inspect the logged line diffs for which strip/param
+alternates. `FRAME CHANGED` paired with `StripsMsg`/snapshot arrivals means
+daemon-side churn — use `SMC_ROUTER_DEBUG`/`SMC_POLLER_DEBUG` to attribute it.
+
+### Case study: the applications-page blink (2026-07, issue router-refactor/05)
+
+Symptom: the TUI flickered at the tick rate on the applications page while
+completely idle; every server-broadcast theory failed (broadcasts measured
+near-zero). The playbook above found two compounding bugs in under an hour
+after days of daemon-side hunting:
+
+1. `router.snapshotLocked` published assignment params the backend never
+   declared; `specFor`'s fallback stamps them `backend.ParamContinuous`,
+   which is **iota zero** — so a phantom `solo {kind:0}` rode along on every
+   strip, masquerading as a second fader. (The socket dump in step 4 made
+   this visible immediately.)
+2. `ui/generic_strip.go` picked "the fader" by ranging over the `s.Params`
+   map and taking the first Continuous param. Go randomizes map iteration
+   order **per call**, so with two kind-0 params the strip rendered a
+   different param nearly every 50 ms tick. Only the crossfade strip
+   visibly blinked because only there did `volume` differ from the
+   phantom's zero value.
+
+Morals: a zero-valued enum (`ParamContinuous = iota`) is a dangerous
+default — spec-less params must be filtered, not defaulted; and any
+"first match wins" scan over a Go map in render code is a frame-to-frame
+coin flip. Regression tests: `TestSnapshotOmitsParamsWithoutBackendSpec`
+(router), `TestFaderParamDeterministicWithMultipleContinuousParams` and
+`TestRenderGenericStripDeterministic` (ui).
+
+---
+
 ## Open issues / planned work
 
-- **Crossfader decoupling.** Anchor each routing to the device + `smc_<tag>_void` instead of an
-  ephemeral `streamID`, so it stops [churning](#4-crossfader-churn) on tab/stream changes.
 - **Generate the WP drop-in from config.** Today `extras/wireplumber/51-smc-mixer.conf` is
   installed by hand. A generator needs the raw `application.process.binary` per app (learn it
   from the live bound stream, or add a `pw-match:` config override), then write the drop-in and

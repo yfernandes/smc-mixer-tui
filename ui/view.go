@@ -3,6 +3,10 @@ package ui
 import "github.com/charmbracelet/lipgloss"
 
 func (m Model) View() string {
+	return dbgView(m.renderView())
+}
+
+func (m Model) renderView() string {
 	if m.routingOpen {
 		if m.routingPickerOpen {
 			return lipgloss.JoinVertical(lipgloss.Left, m.renderRouting(), m.renderRetargetPicker())

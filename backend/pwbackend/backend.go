@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +23,7 @@ type pipewireClient interface {
 	SetVolume(context.Context, uint32, float64) error
 	SetMute(context.Context, uint32, bool) error
 	GetVolume(context.Context, uint32) (float64, bool, error)
+	ListStreams(context.Context) ([]pipewire.Stream, error)
 }
 
 type enricher interface {
@@ -48,10 +51,15 @@ type Backend struct {
 	streams  []streams.EnrichedStream
 	playing  map[uint32]bool
 	interval time.Duration
+	cross    *crossfaderManager
+	cfg      *config.Config
 }
 
-func New(pw *pipewire.Client, e *streams.Enricher, devices map[string]config.DeviceConfig) *Backend {
-	return newBackend(pw, e, streams.NewController(), devices)
+func New(pw *pipewire.Client, e *streams.Enricher, cfg *config.Config) *Backend {
+	b := newBackend(pw, e, streams.NewController(), cfg.Devices)
+	b.cfg = cfg
+	b.cross = newCrossfaderManager(cfg, pw)
+	return b
 }
 
 func newBackend(pw pipewireClient, e enricher, mpris playPauser, devices map[string]config.DeviceConfig) *Backend {
@@ -59,7 +67,7 @@ func newBackend(pw pipewireClient, e enricher, mpris playPauser, devices map[str
 	for key, device := range devices {
 		rules[key] = &ruleState{device: device}
 	}
-	return &Backend{pw: pw, enricher: e, mpris: mpris, rules: rules, playing: make(map[uint32]bool), interval: 2 * time.Second}
+	return &Backend{pw: pw, enricher: e, mpris: mpris, rules: rules, playing: make(map[uint32]bool), interval: 500 * time.Millisecond}
 }
 
 func (b *Backend) Name() string { return Name }
@@ -74,6 +82,13 @@ func (b *Backend) Targets(ctx context.Context) ([]backend.TargetInfo, error) {
 }
 
 func (b *Backend) Set(ctx context.Context, target backend.TargetID, param string, value backend.Value) error {
+	if param == "crossfade" {
+		key, ok := ruleKey(target)
+		if !ok || b.cross == nil {
+			return fmt.Errorf("pipewire: target %q has no crossfader", target)
+		}
+		return b.cross.Set(ctx, key, value.F)
+	}
 	s, ok := b.resolve(target)
 	if !ok {
 		return fmt.Errorf("pipewire: target %q is unresolved", target)
@@ -94,6 +109,14 @@ func (b *Backend) Set(ctx context.Context, target backend.TargetID, param string
 }
 
 func (b *Backend) Get(ctx context.Context, target backend.TargetID, param string) (backend.Value, bool, error) {
+	if param == "crossfade" {
+		key, ok := ruleKey(target)
+		if !ok || b.cross == nil {
+			return backend.Value{}, false, nil
+		}
+		value, known := b.cross.Get(key)
+		return backend.Value{F: value}, known, nil
+	}
 	s, ok := b.resolve(target)
 	if !ok {
 		return backend.Value{}, false, nil
@@ -114,8 +137,7 @@ func (b *Backend) Watch(ctx context.Context, ch chan<- []backend.TargetInfo) {
 	defer close(ch)
 	ticker := time.NewTicker(b.interval)
 	defer ticker.Stop()
-	volumeTicker := time.NewTicker(50 * time.Millisecond)
-	defer volumeTicker.Stop()
+	last := b.targetInfos()
 	for {
 		select {
 		case <-ctx.Done():
@@ -123,12 +145,16 @@ func (b *Backend) Watch(ctx context.Context, ch chan<- []backend.TargetInfo) {
 		case <-ticker.C:
 			if ss, err := b.enricher.Enrich(ctx); err == nil {
 				b.updateStreams(ctx, ss)
+				next := b.targetInfos()
+				if reflect.DeepEqual(last, next) {
+					continue
+				}
+				last = next
+				select {
+				case ch <- next:
+				default:
+				}
 			}
-		case <-volumeTicker.C:
-		}
-		select {
-		case ch <- b.targetInfos():
-		default:
 		}
 	}
 }
@@ -141,7 +167,6 @@ func (b *Backend) updateStreams(ctx context.Context, ss []streams.EnrichedStream
 		}
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.streams = append(b.streams[:0], ss...)
 	b.playing = playing
 	for _, rule := range b.rules {
@@ -151,6 +176,22 @@ func (b *Backend) updateStreams(ctx context.Context, ss []streams.EnrichedStream
 			rule.boundMediaName = rule.current.MediaName
 		}
 	}
+	b.mu.Unlock()
+	if b.cross != nil {
+		b.cross.Sync(ctx, b.ruleSnapshot(), ss)
+	}
+}
+
+func (b *Backend) ruleSnapshot() map[string]streams.EnrichedStream {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	out := make(map[string]streams.EnrichedStream, len(b.rules))
+	for key, rule := range b.rules {
+		if rule.current != nil {
+			out[key] = *rule.current
+		}
+	}
+	return out
 }
 
 func (b *Backend) resolve(target backend.TargetID) (streams.EnrichedStream, bool) {
@@ -190,9 +231,45 @@ func (b *Backend) targetInfos() []backend.TargetInfo {
 		if rule.current != nil {
 			info = targetInfo(info.ID, rule.device.Label, *rule.current, b.playing[rule.current.ID])
 		}
+		if b.cfg != nil {
+			knob, ok := b.cfg.KnobForDevice(key)
+			if !ok || !knob.IsSend() {
+				out = append(out, info)
+				continue
+			}
+			info.Params = append(info.Params, backend.ParamSpec{ID: "crossfade", Kind: backend.ParamComposite, Readable: true, Push: true})
+			if b.cross != nil {
+				if ext, ok := b.cross.Ext(key); ok {
+					info.Ext = mergeExt(info.Ext, ext)
+				}
+			}
+		}
 		out = append(out, info)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func ruleKey(target backend.TargetID) (string, bool) {
+	const prefix = Name + ":rule/"
+	value := string(target)
+	return strings.TrimPrefix(value, prefix), strings.HasPrefix(value, prefix)
+}
+
+func mergeExt(raw json.RawMessage, values map[string]string) json.RawMessage {
+	merged := make(map[string]any)
+	_ = json.Unmarshal(raw, &merged)
+	for key, value := range values {
+		merged[key] = value
+	}
+	out, _ := json.Marshal(merged)
+	return out
+}
+
+func (b *Backend) Close(ctx context.Context) {
+	if b.cross != nil {
+		b.cross.Close(ctx)
+	}
 }
 
 func targetInfo(id backend.TargetID, label string, s streams.EnrichedStream, playing bool) backend.TargetInfo {

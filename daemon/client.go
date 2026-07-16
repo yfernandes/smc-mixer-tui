@@ -176,25 +176,14 @@ func (c *Client) ToggleParam(target, param string) {
 	c.send(kindToggle, togglePayload{Target: target, Param: param})
 }
 
-// RequestRouting asks the daemon for a fresh routing inspector snapshot; the
-// response arrives asynchronously as a RoutingMsg via the Bubbletea program.
-// Implements ui.Dispatcher.
-func (c *Client) RequestRouting() {
-	c.send(kindRoutingRequest, struct{}{})
+func (c *Client) RequestBackendView(backendName, view string, data json.RawMessage) {
+	c.send(kindBackendViewReq, BackendViewPayload{Backend: backendName, View: view, Data: data})
 }
 
-// RoutingMsg carries a routing inspector snapshot pushed by the daemon.
-type RoutingMsg RoutingSnapshot
+type BackendViewMsg BackendViewPayload
 
 // StripsMsg carries generic router strip state pushed by the daemon.
 type StripsMsg StripsWire
-
-// RetargetOutput asks the daemon to repoint a crossfade branch's output sink
-// at a different live sink. deviceKey and branch come from a RouteNode/
-// RouteBranch in the last-received RoutingSnapshot. Implements ui.Dispatcher.
-func (c *Client) RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string) {
-	c.send(kindRetarget, retargetPayload{DeviceKey: deviceKey, Branch: branch, SinkNodeName: sinkNodeName, SinkDisplayName: sinkDisplayName})
-}
 
 func (c *Client) send(kind msgKind, v any) {
 	frame, err := encodeFrame(kind, v)
@@ -281,14 +270,14 @@ func (c *Client) handlePush(env envelope) {
 			c.prog.Send(msg)
 		}
 
-	case kindRouting:
-		var snap RoutingSnapshot
-		if err := json.Unmarshal(env.Data, &snap); err != nil {
-			log.Printf("client: routing: %v", err)
+	case kindBackendViewResp:
+		var payload BackendViewPayload
+		if err := json.Unmarshal(env.Data, &payload); err != nil {
+			log.Printf("client: backend view: %v", err)
 			return
 		}
 		if c.prog != nil {
-			c.prog.Send(RoutingMsg(snap))
+			c.prog.Send(BackendViewMsg(payload))
 		}
 	}
 }

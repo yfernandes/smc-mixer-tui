@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/yfernandes/smc-mixer-tui/audio"
+	"github.com/yfernandes/smc-mixer-tui/backend/pwbackend"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/streams"
 )
@@ -37,9 +38,8 @@ const (
 	kindSet      msgKind = "set"      // client → daemon: set generic param
 	kindToggle   msgKind = "toggle"   // client → daemon: toggle generic param
 
-	kindRoutingRequest msgKind = "routing_request" // client → daemon: request a routing snapshot
-	kindRouting        msgKind = "routing"         // daemon → client: routing snapshot response
-	kindRetarget       msgKind = "retarget"        // client → daemon: repoint a crossfade branch's output sink
+	kindBackendViewReq  msgKind = "backend_view_req"
+	kindBackendViewResp msgKind = "backend_view_resp"
 )
 
 // envelope is the newline-delimited wire format.
@@ -230,68 +230,18 @@ type togglePayload struct {
 	Param  string `json:"param"`
 }
 
-// ── Routing inspector payloads ────────────────────────────────────────────────
-
-// RouteStep is one transformation stage of a route (e.g. a null sink, a gain
-// stage, an output sink). InternalVolume is what the daemon last commanded
-// (only meaningful when HasInternal is true); LiveVolume/LiveMuted are freshly
-// queried from PipeWire (only meaningful when LiveKnown is true — the node may
-// not exist, e.g. torn-down or never created).
-// HasVolume is false for steps where volume isn't a meaningful concept for
-// that node (e.g. the raw stream identity, or a null sink whose device volume
-// is never touched and always reads 100%) — the UI omits the int=/live=
-// fields entirely for those rather than showing permanently-uninteresting
-// values.
-type RouteStep struct {
-	Label          string  `json:"label"`
-	NodeName       string  `json:"node_name"`
-	HasVolume      bool    `json:"has_volume"`
-	HasInternal    bool    `json:"has_internal"`
-	InternalVolume float64 `json:"internal_volume"`
-	LiveKnown      bool    `json:"live_known"`
-	LiveVolume     float64 `json:"live_volume"`
-	LiveMuted      bool    `json:"live_muted"`
+type BackendViewPayload struct {
+	Backend string          `json:"backend"`
+	View    string          `json:"view"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-// RouteBranch is one path a stream's signal can take (e.g. "A"/"B" for a
-// crossfader, "Direct" for a plain binding), as an ordered list of steps.
-type RouteBranch struct {
-	Label string      `json:"label"`
-	Steps []RouteStep `json:"steps"`
-}
-
-// RouteNode is the root of one managed stream's routing tree. AttachedCh is
-// the hardware channel currently controlling it, or -1 if the stream is
-// managed but not bound to any of the 8 channels. Trunk holds the steps
-// shared by every branch (the raw stream node, its fader, and — for
-// crossfade routes — the null sink) before Branches fork. Category groups
-// nodes in the UI ("applications", "outputs", "inputs" — mirroring the page
-// order) so the tree doesn't reorder itself as streams come and go.
-// DeviceKey identifies the crossfaderManager entry this node came from
-// (empty for non-crossfade nodes) — the client echoes it back on a retarget
-// command to address the right route.
-type RouteNode struct {
-	StreamName string        `json:"stream_name"`
-	Category   string        `json:"category"`
-	AttachedCh int           `json:"attached_ch"`
-	DeviceKey  string        `json:"device_key,omitempty"`
-	Trunk      []RouteStep   `json:"trunk"`
-	Branches   []RouteBranch `json:"branches"`
-}
-
-// RoutingSnapshot is the full routing inspector payload.
-type RoutingSnapshot struct {
-	Routes []RouteNode `json:"routes"`
-}
-
-// retargetPayload repoints one crossfade branch's output sink. Branch is "A"
-// or "B"; SinkNodeName/SinkDisplayName describe the new destination.
-type retargetPayload struct {
-	DeviceKey       string `json:"device_key"`
-	Branch          string `json:"branch"`
-	SinkNodeName    string `json:"sink_node_name"`
-	SinkDisplayName string `json:"sink_display_name"`
-}
+// Compatibility aliases keep callers source-compatible while ownership of
+// the opaque payload types lives with the compiled-in PipeWire backend view.
+type RouteStep = pwbackend.RouteStep
+type RouteBranch = pwbackend.RouteBranch
+type RouteNode = pwbackend.RouteNode
+type RoutingSnapshot = pwbackend.RoutingSnapshot
 
 type muteTogglePayload struct {
 	Ch int `json:"ch"`

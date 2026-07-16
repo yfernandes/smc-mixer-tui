@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"encoding/json"
+	"sort"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/backend"
+	"github.com/yfernandes/smc-mixer-tui/backend/pwbackend"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/midi"
 	"github.com/yfernandes/smc-mixer-tui/surface"
@@ -78,7 +82,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		m.routingOpen = true
-		m.disp.RequestRouting()
+		m.disp.RequestBackendView(pwbackend.Name, "routing", nil)
 		return m, routingTickCmd()
 	}
 	return m, nil
@@ -143,7 +147,8 @@ func (m Model) confirmRetarget() {
 	node := m.routing.Routes[t.NodeIdx]
 	branch := node.Branches[t.BranchIdx]
 	sink := candidates[m.routingPickerCursor]
-	m.disp.RetargetOutput(node.DeviceKey, branch.Label, sink.NodeName, sink.Name)
+	data, _ := json.Marshal(pwbackend.RetargetRequest{DeviceKey: node.DeviceKey, Branch: branch.Label, SinkNodeName: sink.NodeName, SinkDisplayName: sink.Name})
+	m.disp.RequestBackendView(pwbackend.Name, "retarget", data)
 }
 
 // PageChangedMsg is emitted when the active page changes via a transport button.
@@ -267,8 +272,16 @@ func genericToggleParamFor(s daemon.StripWire, preferred string) (string, bool) 
 	if p, ok := s.Params[preferred]; ok && p.Kind == uint8(backend.ParamToggle) {
 		return preferred, true
 	}
-	for param, p := range s.Params {
-		if p.Kind == uint8(backend.ParamToggle) {
+	// Deterministic fallback: map iteration order is randomized per call, so
+	// picking "any toggle" straight off the map would flicker between params
+	// on strips that expose more than one.
+	params := make([]string, 0, len(s.Params))
+	for param := range s.Params {
+		params = append(params, param)
+	}
+	sort.Strings(params)
+	for _, param := range params {
+		if s.Params[param].Kind == uint8(backend.ParamToggle) {
 			return param, true
 		}
 	}

@@ -18,7 +18,6 @@ func New(pw PipeWire) *Dispatcher {
 	}
 	for i := range d.volWorkers {
 		d.volWorkers[i] = make(chan float64, 1)
-		d.crossWorkers[i] = make(chan crossGains, 1)
 		d.knobVolWorkers[i] = make(chan float64, 1)
 	}
 	return d
@@ -66,7 +65,6 @@ func (d *Dispatcher) Run(ctx context.Context, msgs <-chan midi.Msg) {
 		defer cancel()
 		for i := range d.volWorkers {
 			go d.runVolWorker(workerCtx, i)
-			go d.runCrossWorker(workerCtx, i)
 			go d.runKnobVolWorker(workerCtx, i)
 		}
 	}

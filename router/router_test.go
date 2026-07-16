@@ -115,6 +115,18 @@ func TestHandleEventAccumulatesKnob(t *testing.T) {
 	}
 }
 
+func TestReadableKnobSeedsRelativePosition(t *testing.T) {
+	fb := &fakeBackend{infos: []backend.TargetInfo{{ID: "fake:cross", Params: []backend.ParamSpec{{ID: "crossfade", Kind: backend.ParamComposite, Readable: true}}}}, values: map[string]backend.Value{"fake:cross/crossfade": {F: .5}}}
+	rt := New(map[string]backend.Backend{"fake": fb}, map[int]Assignment{
+		0: {Target: "fake:cross", Params: map[surface.Role]string{surface.RoleKnob: "crossfade"}},
+	})
+	rt.Activate(context.Background())
+	rt.HandleEvent(context.Background(), surface.Event{Strip: 0, Role: surface.RoleKnob, Delta: 1})
+	if len(fb.calls) != 1 || fb.calls[0].value.F != 65.0/127.0 {
+		t.Fatalf("seeded knob call = %+v, want 65/127", fb.calls)
+	}
+}
+
 func TestReadableFaderRequiresSoftPickupCrossing(t *testing.T) {
 	fb := readableFake(backend.ParamContinuous, backend.Value{F: 0.5})
 	rt := New(map[string]backend.Backend{"fake": fb}, map[int]Assignment{
@@ -279,5 +291,37 @@ func readableFake(kind backend.ParamKind, v backend.Value) *fakeBackend {
 			"fake:brightness/value": v,
 			"fake:lamp/mute":        v,
 		},
+	}
+}
+
+func TestSnapshotOmitsParamsWithoutBackendSpec(t *testing.T) {
+	fb := &fakeBackend{infos: []backend.TargetInfo{
+		{ID: "fake:a", Params: []backend.ParamSpec{
+			{ID: "volume", Kind: backend.ParamContinuous, Readable: true},
+			{ID: "mute", Kind: backend.ParamToggle, Readable: true},
+		}},
+	}, values: map[string]backend.Value{}}
+	rt := New(map[string]backend.Backend{"fake": fb}, map[int]Assignment{
+		0: {Target: "fake:a", Params: map[surface.Role]string{
+			surface.RoleFader: "volume",
+			surface.RoleMute:  "mute",
+			surface.RoleSolo:  "solo", // no backend spec — must not reach the snapshot
+		}},
+	})
+	rt.Activate(context.Background())
+
+	snap := rt.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot strips = %d, want 1", len(snap))
+	}
+	params := snap[0].Params
+	if _, ok := params["solo"]; ok {
+		t.Fatalf("spec-less param leaked into snapshot (zero ParamKind reads as Continuous): %+v", params)
+	}
+	if _, ok := params["volume"]; !ok {
+		t.Fatalf("volume missing from snapshot: %+v", params)
+	}
+	if _, ok := params["mute"]; !ok {
+		t.Fatalf("mute missing from snapshot: %+v", params)
 	}
 }

@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yfernandes/smc-mixer-tui/audio"
 	"github.com/yfernandes/smc-mixer-tui/backend"
+	"github.com/yfernandes/smc-mixer-tui/backend/pwbackend"
 	"github.com/yfernandes/smc-mixer-tui/daemon"
 	"github.com/yfernandes/smc-mixer-tui/dispatcher"
 	"github.com/yfernandes/smc-mixer-tui/midi"
@@ -56,9 +58,19 @@ func (f *fakeDisp) SetParam(target, param string, value float64, boolValue bool)
 func (f *fakeDisp) ToggleParam(target, param string) {
 	f.toggles = append(f.toggles, toggleCall{target, param})
 }
-func (f *fakeDisp) RequestRouting() { f.routingRequests++ }
-func (f *fakeDisp) RetargetOutput(deviceKey, branch, sinkNodeName, sinkDisplayName string) {
-	f.retargets = append(f.retargets, retargetCall{deviceKey, branch, sinkNodeName, sinkDisplayName})
+func (f *fakeDisp) RequestBackendView(backendName, view string, data json.RawMessage) {
+	if backendName != pwbackend.Name {
+		return
+	}
+	if view == "routing" {
+		f.routingRequests++
+		return
+	}
+	if view == "retarget" {
+		var req pwbackend.RetargetRequest
+		_ = json.Unmarshal(data, &req)
+		f.retargets = append(f.retargets, retargetCall{req.DeviceKey, req.Branch, req.SinkNodeName, req.SinkDisplayName})
+	}
 }
 
 // — helpers —
@@ -744,5 +756,46 @@ func TestEscClosesPickerBeforeRoutingView(t *testing.T) {
 	m = upd(m, kEsc())
 	if m.routingOpen {
 		t.Fatal("second Esc should close the routing view")
+	}
+}
+
+// faderParam must be deterministic: with more than one Continuous-kind param
+// on the wire (e.g. a phantom spec-less param from an older daemon), a random
+// map-order pick renders a different param frame-to-frame and the strip
+// flickers at the tick rate (issue 05, applications-page blinking).
+func TestFaderParamDeterministicWithMultipleContinuousParams(t *testing.T) {
+	s := daemon.StripWire{Params: map[string]daemon.ParamWire{
+		"volume": {Kind: 0, Value: 0.93, Readable: true},
+		"solo":   {Kind: 0, Value: 0, Readable: false}, // phantom Continuous
+		"mute":   {Kind: 1, Bool: false, Readable: true},
+	}}
+	want := faderParam(s)
+	if want.Value != 0.93 || !want.Readable {
+		t.Fatalf("faderParam picked %+v, want the readable volume param", want)
+	}
+	for i := 0; i < 100; i++ {
+		if got := faderParam(s); got != want {
+			t.Fatalf("faderParam not deterministic: iteration %d got %+v, want %+v", i, got, want)
+		}
+	}
+}
+
+// The rendered strip itself must be byte-identical across renders when the
+// model state has not changed.
+func TestRenderGenericStripDeterministic(t *testing.T) {
+	m := Model{strips: map[int]daemon.StripWire{2: {
+		Strip: 2, Backend: "pipewire", Label: "Zen",
+		Params: map[string]daemon.ParamWire{
+			"volume":    {Kind: 0, Value: 0.93, Readable: true},
+			"solo":      {Kind: 0},
+			"crossfade": {Kind: 3, Value: 0.5, Readable: true},
+			"mute":      {Kind: 1, Readable: true},
+		},
+	}}}
+	first := m.renderGenericStrip(2, m.strips[2])
+	for i := 0; i < 100; i++ {
+		if got := m.renderGenericStrip(2, m.strips[2]); got != first {
+			t.Fatalf("render not deterministic at iteration %d", i)
+		}
 	}
 }

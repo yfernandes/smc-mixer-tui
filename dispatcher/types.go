@@ -10,8 +10,6 @@ import (
 	"github.com/yfernandes/smc-mixer-tui/midi"
 )
 
-type crossGains = [2]float64
-
 // PickupThreshold is the default fader-to-actual-volume tolerance for soft pickup (~1.6% of full travel).
 // Expressed as a normalized fraction so it is independent of MIDI bit depth.
 const PickupThreshold = 2.0 / 127.0
@@ -30,12 +28,6 @@ const (
 type PipeWire interface {
 	SetVolume(ctx context.Context, id uint32, vol float64) error
 	SetMute(ctx context.Context, id uint32, muted bool) error
-}
-
-// CrossfaderController applies independent per-sink gains for a crossfader channel.
-// volA and volB are 0.0–1.0 and do not touch the global sink volumes.
-type CrossfaderController interface {
-	SetGains(ctx context.Context, volA, volB float64) error
 }
 
 // LEDWriter sends LED feedback to the MIDI device.
@@ -99,14 +91,9 @@ type Channel struct {
 	// KnobStreamID is the PipeWire node ID that this channel's knob controls for
 	// gain writes (main page independent knob slots). nil means knob is either a
 	// crossfader or unassigned.
-	KnobStreamID *uint32
-
-	// Crossfader: when set, the knob routes audio between two output sinks.
-	// Knob 0 = only SinkA, knob 127 = only SinkB, knob 64 = both at full.
-	// crossfader is unexported so Snapshot copies work without exposing internals.
-	crossfader     CrossfaderController
-	CrossSinkAName string // display name for SinkA
-	CrossSinkBName string // display name for SinkB
+	KnobStreamID   *uint32
+	CrossSinkAName string // legacy wire/display field; crossfader ownership is in pwbackend
+	CrossSinkBName string // legacy wire/display field; crossfader ownership is in pwbackend
 
 }
 
@@ -147,7 +134,6 @@ type Dispatcher struct {
 	// Run is single-use: calling it a second time logs an error and returns immediately.
 	volThrottle    time.Duration
 	volWorkers     [8]chan float64
-	crossWorkers   [8]chan crossGains
 	knobVolWorkers [8]chan float64
 	runStarted     atomic.Bool // CAS from false→true on first Run; second call logs and returns
 }
